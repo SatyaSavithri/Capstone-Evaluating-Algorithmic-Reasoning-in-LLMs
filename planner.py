@@ -1,16 +1,15 @@
 # planner.py
 import networkx as nx
-START_NODE = "Room 1"
 
-def node_with_max_reward(G: nx.Graph) -> str:
+def bfs_optimal_path_to_max_reward(G, start_node):
+    """
+    Compute BFS shortest path from a user-selected START node
+    to the highest reward node.
+    """
     rewards = nx.get_node_attributes(G, "reward")
-    if not rewards:
-        return START_NODE
-    return max(rewards.items(), key=lambda x: x[1])[0]
+    max_node = max(rewards, key=lambda n: rewards[n])
 
-def bfs_optimal_path_to_max_reward(G: nx.Graph, start: str = START_NODE):
     try:
-        target = node_with_max_reward(G)
-        return nx.shortest_path(G, source=start, target=target)
-    except Exception:
-        return []
+        return nx.shortest_path(G, source=start_node, target=max_node)
+    except:
+        return ["NO PATH"]
