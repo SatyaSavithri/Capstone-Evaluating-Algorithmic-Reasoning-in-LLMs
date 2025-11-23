@@ -1,3 +1,5 @@
+# run_capstone_transformers.py
+
 import matplotlib.pyplot as plt
 import networkx as nx
 
@@ -52,30 +54,39 @@ def choose_method():
     return input("Enter choice: ").strip()
 
 
+def choose_start_node(G):
+    print("\nAvailable rooms:")
+    for node in sorted(G.nodes()):
+        print(" -", node)
+
+    while True:
+        start = input("\nEnter START room exactly as shown above: ").strip()
+        if start in G.nodes():
+            return start
+        print("Invalid room. Try again.")
+
+
 # ============================================================
 #                 GRAPH VISUALIZATION FUNCTION
 # ============================================================
 
 def draw_graph(G, symbolic_path):
-    """Draws the graph and highlights the symbolic path in red."""
+    """Draw the graph and highlight the chosen BFS path."""
     pos = nx.spring_layout(G, seed=42)
 
     plt.figure(figsize=(8, 6))
 
-    # Draw all nodes
-    nx.draw_networkx_nodes(G, pos, node_color="lightblue", node_size=900)
+    nx.draw(G, pos, with_labels=True,
+            node_color="lightblue",
+            node_size=900,
+            font_size=10)
 
-    # Draw all edges
-    nx.draw_networkx_edges(G, pos, width=1)
+    if symbolic_path and len(symbolic_path) > 1:
+        edges = list(zip(symbolic_path, symbolic_path[1:]))
+        nx.draw_networkx_edges(G, pos, edgelist=edges,
+                               width=3, edge_color="red")
 
-    # Add labels to nodes
-    nx.draw_networkx_labels(G, pos, font_size=10)
-
-    # Highlight best symbolic path
-    path_edges = list(zip(symbolic_path, symbolic_path[1:]))
-    nx.draw_networkx_edges(G, pos, edgelist=path_edges, width=3, edge_color="red")
-
-    plt.title("Graph Visualization with Symbolic Optimal Path Highlighted", fontsize=14)
+    plt.title("Graph with Symbolic Optimal Path")
     plt.tight_layout()
     plt.show()
 
@@ -94,47 +105,47 @@ def main():
     # -------------------- Load graph --------------------
     graph_name, G = choose_graph()
 
+    # -------------------- USER chooses start node --------------------
+    start_node = choose_start_node(G)
+
     # -------------------- Choose method --------------------
     method = choose_method()
 
     # -------------------- Compute symbolic path --------------------
-    symbolic_path = bfs_optimal_path_to_max_reward(G)
+    symbolic_path = bfs_optimal_path_to_max_reward(G, start_node)
     print("\nSymbolic optimal path:")
     print(" → ".join(symbolic_path))
 
     # -------------------- Draw graph --------------------
     draw_graph(G, symbolic_path)
 
-    # -------------------- Build prompt for LLM --------------------
+    # -------------------- Build prompt --------------------
     description = base_description_text(G)
     prompt = scratchpad_prompt(description, "valuePath")
 
-    # -------------------- Run selected method --------------------
     print("\n=== Running Method ===\n")
 
+    # -------------------- METHOD EXECUTION --------------------
     if method == "1":
         print("Method: Scratchpad reasoning\n")
-        answer = llm.generate(prompt, max_new_tokens=30)
+        answer = llm.generate(prompt, max_new_tokens=10)
         print("\nLLM Output:\n", answer)
 
     elif method == "2":
-        print("Method: Hybrid reasoning (Symbolic + LLM)\n")
-        answer = llm.generate(prompt, max_new_tokens=30)
+        print("Method: Hybrid reasoning\n")
+        answer = llm.generate(prompt, max_new_tokens=10)
         print("\nLLM Output:\n", answer)
 
     elif method == "3":
         print("Method: Dynamic RSA (Hidden States)\n")
-        data = llm.generate_with_activations(prompt, max_new_tokens=30)
+        data = llm.generate_with_activations(prompt, max_new_tokens=10)
         print("\nHidden state layers:", len(data["hidden_states"]))
         print("Attention layers:", len(data["attentions"]))
 
     elif method == "4":
         print("Method: Attention Analysis\n")
-        data = llm.generate_with_activations(prompt, max_new_tokens=30)
+        data = llm.generate_with_activations(prompt, max_new_tokens=10)
         print("\nAttention layers:", len(data["attentions"]))
-        print("Attention tensor shapes:")
-        for idx, a in enumerate(data["attentions"]):
-            print(f"Layer {idx}: {a.shape}")
 
     print("\n=== Completed Successfully ===\n")
 
