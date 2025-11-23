@@ -1,50 +1,60 @@
 # graphs.py
 import networkx as nx
+
 NODE_PREFIX = "Room"
 
-def _room(i: int) -> str:
-    return f"{NODE_PREFIX} {i}"
 
-def create_line_graph(n_nodes: int = 7) -> nx.Graph:
-    G = nx.path_graph(n_nodes)
-    mapping = {i: _room(i+1) for i in range(n_nodes)}
+def create_line_graph():
+    G = nx.path_graph(7)
+    mapping = {i: f"{NODE_PREFIX} {i+1}" for i in range(7)}
     G = nx.relabel_nodes(G, mapping)
+
     rewards = {node: 0 for node in G.nodes()}
-    rewards[_room(n_nodes)] = 50
-    if n_nodes >= 3:
-        rewards[_room(n_nodes-2)] = 20
+    rewards["Room 7"] = 50
+    rewards["Room 5"] = 20
     nx.set_node_attributes(G, rewards, "reward")
+
     return G
 
-def create_tree_graph() -> nx.Graph:
+
+def create_tree_graph():
     G = nx.Graph()
+    nodes = [f"{NODE_PREFIX} {i}" for i in range(1, 8)]
+    G.add_nodes_from(nodes)
+
     edges = [
-        (_room(1), _room(2)), (_room(1), _room(3)),
-        (_room(2), _room(4)), (_room(2), _room(5)),
-        (_room(3), _room(6)), (_room(3), _room(7))
+        ("Room 1", "Room 2"), ("Room 1", "Room 3"),
+        ("Room 2", "Room 4"), ("Room 2", "Room 5"),
+        ("Room 3", "Room 6"), ("Room 3", "Room 7")
     ]
     G.add_edges_from(edges)
-    rewards = {node: 0 for node in G.nodes()}
-    rewards[_room(7)] = 50
-    rewards[_room(4)] = 15
+
+    rewards = {n: 0 for n in nodes}
+    rewards["Room 7"] = 50
+    rewards["Room 4"] = 15
     nx.set_node_attributes(G, rewards, "reward")
+
     return G
 
-def create_clustered_graph(n_clusters: int = 3, cluster_size: int = 5) -> nx.Graph:
+
+def create_clustered_graph():
     G = nx.Graph()
-    clusters = []
-    for i in range(n_clusters):
-        base = i * cluster_size
-        clique = nx.complete_graph(cluster_size)
-        mapping = {node: f"{NODE_PREFIX} {base + node + 1}" for node in clique.nodes()}
-        clique = nx.relabel_nodes(clique, mapping)
-        G = nx.union(G, clique, rename=(None, None))
-        clusters.append(list(clique.nodes()))
-    for i in range(len(clusters)-1):
-        G.add_edge(clusters[i][-1], clusters[i+1][0])
-    rewards = {node: 0 for node in G.nodes()}
-    rewards[clusters[-1][-1]] = 75
-    if len(clusters[0]) >= 4:
-        rewards[clusters[0][3]] = 30
+    cluster_size = 5
+
+    nodes = []
+    for i in range(3):
+        cluster = nx.complete_graph(cluster_size)
+        mapping = {j: f"{NODE_PREFIX} {i*cluster_size + j + 1}" for j in range(cluster_size)}
+        cluster = nx.relabel_nodes(cluster, mapping)
+        G = nx.union(G, cluster)
+        nodes.extend(cluster.nodes())
+
+        if i > 0:
+            G.add_edge(nodes[i * cluster_size - 1], nodes[i * cluster_size])
+
+    rewards = {n: 0 for n in G.nodes()}
+    rewards[nodes[-1]] = 75
+    rewards[nodes[3]] = 30
     nx.set_node_attributes(G, rewards, "reward")
+
     return G
