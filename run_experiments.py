@@ -13,7 +13,7 @@ from graphs import (
     create_clustered_graph
 )
 from capture import save_trial
-from capture_patch_file import load_model  # Use the ready-to-save capture_patch.py
+from capture_patch import load_model  # Use the ready-to-save capture_patch.py
 from models_transformers import TransformersLLM
 
 # -------------------------------
