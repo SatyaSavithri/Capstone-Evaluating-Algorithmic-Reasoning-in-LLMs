@@ -1,5 +1,5 @@
 # ============================================================
-# run_experiments.py  (Interactive Batch Experiment Runner - Optimized)
+# run_experiments.py  (Fully professional & optimized)
 # ============================================================
 
 import time
@@ -13,7 +13,8 @@ from graphs import (
     create_clustered_graph
 )
 from capture import save_trial
-from capture_patch import load_model  # Optimized loader
+from capture_patch_file import load_model  # Use the ready-to-save capture_patch.py
+from models_transformers import TransformersLLM
 
 # -------------------------------
 # GRAPH FACTORY
@@ -117,15 +118,8 @@ def main():
 
     # ----------------- Optimized model loading -----------------
     print("\nLoading model efficiently...\n")
-    model, tokenizer = load_model(model_id)  # Use float16 & GPU if available
-
-    # Wrap in your TransformersLLM wrapper if needed
-    from capture_patch import load_model
-    from models_transformers import TransformersLLM
-
     model, tokenizer = load_model(model_id)
     llm = TransformersLLM(model=model, tokenizer=tokenizer)
-
 
     model_short = model_id.split("/")[-1]
 
