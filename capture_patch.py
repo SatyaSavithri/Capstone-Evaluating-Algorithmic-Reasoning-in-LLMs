@@ -151,4 +151,3 @@ def load_model(model_name: str, device: str = "cuda"):
 
     print(f"[capture_patch] Model {model_name} loaded successfully")
     return model, tokenizer
-PY
