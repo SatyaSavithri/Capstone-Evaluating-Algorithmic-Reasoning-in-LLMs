@@ -1,20 +1,22 @@
 # ============================================================
-# run_experiments.py  (Fully professional & optimized)
+# run_experiments.py  (Fully Professional & Compatible Version)
 # ============================================================
 
 import time
 import random
 from pathlib import Path
-import networkx as nx
+from prompts import scratchpad_prompt, base_description_text
 
 from graphs import (
     create_line_graph,
     create_tree_graph,
     create_clustered_graph
 )
+
 from capture import save_trial
-from capture_patch import load_model  # Use the ready-to-save capture_patch.py
+from capture import load_model
 from models_transformers import TransformersLLM
+
 
 # -------------------------------
 # GRAPH FACTORY
@@ -31,6 +33,7 @@ METHOD_SELECTION = {
     "3": "DynamicRSA",
     "4": "Attention",
 }
+
 
 # ============================================================
 # INTERACTIVE MENUS
@@ -102,6 +105,7 @@ def confirm_start():
     c = input("\nStart running experiments? (y/n): ").lower().strip()
     return c == "y"
 
+
 # ============================================================
 # MAIN
 # ============================================================
@@ -116,14 +120,14 @@ def main():
     methods = choose_methods_interactive()
     seeds = choose_seeds_interactive()
 
-    # ----------------- Optimized model loading -----------------
+    # ----------------- Load model -----------------
     print("\nLoading model efficiently...\n")
     model, tokenizer = load_model(model_id)
     llm = TransformersLLM(model=model, tokenizer=tokenizer)
 
     model_short = model_id.split("/")[-1]
 
-    # create graph
+    # ----------------- Build graph -----------------
     G = graph_fn()
     start_nodes = list(G.nodes())
 
@@ -140,16 +144,43 @@ def main():
     print("=========================================\n")
 
     for start_node in start_nodes:
+        # Build graph description once per start node
+        description = base_description_text(G)
+
         for method_name in methods:
             for seed in seeds:
 
                 random.seed(seed)
-                trial_id = f"{model_short}_{graph_name}_{method_name}_{start_node.replace(' ','_')}_s{seed}"
+
+                # ---------------------------------------------------
+                # Create prompt
+                # ---------------------------------------------------
+                prompt = scratchpad_prompt(description, "valuePath")
+
+                # ---------------------------------------------------
+                # Create metadata for trial
+                # ---------------------------------------------------
+                meta = {
+                    "room_names": list(G.nodes()),
+                    "seed": seed
+                }
+
+                # ---------------------------------------------------
+                # Generate trial ID and file path
+                # ---------------------------------------------------
+                trial_id = f"{model_short}_{graph_name}_{method_name}_{start_node.replace(' ', '_')}_s{seed}"
+                meta_path = Path(f"data/raw/{trial_id}.json")
 
                 print(f"\n[Running Trial] {trial_id}")
 
+                # ---------------------------------------------------
+                # Save trial (NEW SIGNATURE)
+                # ---------------------------------------------------
                 save_trial(
                     llm=llm,
+                    prompt=prompt,
+                    meta=meta,
+                    meta_path=meta_path,
                     G=G,
                     model_id=model_id,
                     graph_name=graph_name,
