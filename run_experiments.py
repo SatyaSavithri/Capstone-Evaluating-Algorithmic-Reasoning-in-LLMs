@@ -1,5 +1,5 @@
 # ============================================================
-# run_experiments.py  (Interactive Batch Experiment Runner)
+# run_experiments.py  (Interactive Batch Experiment Runner - Optimized)
 # ============================================================
 
 import time
@@ -7,25 +7,22 @@ import random
 from pathlib import Path
 import networkx as nx
 
-from models_transformers import TransformersLLM
 from graphs import (
     create_line_graph,
     create_tree_graph,
     create_clustered_graph
 )
 from capture import save_trial
-
+from capture_patch import load_model  # Optimized loader
 
 # -------------------------------
 # GRAPH FACTORY
 # -------------------------------
-
 GRAPH_FACTORY = {
     "1": ("n7line", create_line_graph),
     "2": ("n7tree", create_tree_graph),
     "3": ("n15clustered", create_clustered_graph),
 }
-
 
 METHOD_SELECTION = {
     "1": "Scratchpad",
@@ -33,7 +30,6 @@ METHOD_SELECTION = {
     "3": "DynamicRSA",
     "4": "Attention",
 }
-
 
 # ============================================================
 # INTERACTIVE MENUS
@@ -105,7 +101,6 @@ def confirm_start():
     c = input("\nStart running experiments? (y/n): ").lower().strip()
     return c == "y"
 
-
 # ============================================================
 # MAIN
 # ============================================================
@@ -120,9 +115,14 @@ def main():
     methods = choose_methods_interactive()
     seeds = choose_seeds_interactive()
 
-    # load model once
-    print("\nLoading model...\n")
-    llm = TransformersLLM(model_id=model_id)
+    # ----------------- Optimized model loading -----------------
+    print("\nLoading model efficiently...\n")
+    model, tokenizer = load_model(model_id)  # Use float16 & GPU if available
+
+    # Wrap in your TransformersLLM wrapper if needed
+    from models_transformers import TransformersLLM
+    llm = TransformersLLM(model=model, tokenizer=tokenizer)
+
     model_short = model_id.split("/")[-1]
 
     # create graph
