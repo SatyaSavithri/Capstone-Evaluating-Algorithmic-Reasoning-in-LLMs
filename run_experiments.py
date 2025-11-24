@@ -120,8 +120,12 @@ def main():
     model, tokenizer = load_model(model_id)  # Use float16 & GPU if available
 
     # Wrap in your TransformersLLM wrapper if needed
+    from capture_patch import load_model
     from models_transformers import TransformersLLM
+
+    model, tokenizer = load_model(model_id)
     llm = TransformersLLM(model=model, tokenizer=tokenizer)
+
 
     model_short = model_id.split("/")[-1]
 
