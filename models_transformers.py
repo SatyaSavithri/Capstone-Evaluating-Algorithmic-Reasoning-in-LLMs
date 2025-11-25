@@ -1,6 +1,6 @@
 # ============================================================
 # models_transformers.py
-# Professional LLM Wrapper with Activation Capture
+# Professional LLM Wrapper with Activation Capture (RSA + Attn)
 # ============================================================
 
 import torch
@@ -9,93 +9,123 @@ from transformers import AutoTokenizer, AutoModelForCausalLM
 
 class TransformersLLM:
     """
-    Wrapper around a HuggingFace casual LM that supports:
-      - Standard text generation
-      - Activation capture (hidden states + attention)
-      - Loading from HF hub OR using externally passed model/tokenizer
+    Wrapper around HuggingFace causal LMs supporting:
+      • Standard generation
+      • Hidden-state capture (Dynamic RSA)
+      • Attention-weight capture (requires eager attention)
+      • Loading via HF hub or preloaded instances
     """
 
     def __init__(self, model_id=None, model=None, tokenizer=None, device=None):
         """
         Initialize the LLM wrapper.
 
-        Parameters:
-        - model_id: HuggingFace model ID (string)
-        - model: Preloaded model instance (optional)
-        - tokenizer: Preloaded tokenizer instance (optional)
-        - device: "cuda", "cpu", or None (auto-detect)
+        Args:
+            model_id: HuggingFace model ID (optional if model + tokenizer provided)
+            model: Preloaded model instance
+            tokenizer: Preloaded tokenizer instance
+            device: "cuda", "cpu", or None → auto-detect
         """
+
+        # -------------------------------
+        # Device selection
+        # -------------------------------
         if device is None:
             device = "cuda" if torch.cuda.is_available() else "cpu"
         self.device = device
 
-        # Load externally supplied model + tokenizer
+        # -------------------------------
+        # Load provided model/tokenizer
+        # -------------------------------
         if model is not None and tokenizer is not None:
             self.model = model.to(self.device)
             self.tokenizer = tokenizer
 
+        # -------------------------------
         # Load from HuggingFace Hub
+        # -------------------------------
         elif model_id is not None:
             self.model_id = model_id
             self.tokenizer = AutoTokenizer.from_pretrained(model_id)
+
+            # Load model using GPU if possible
+            torch_dtype = torch.float16 if torch.cuda.is_available() else torch.float32
+
             self.model = AutoModelForCausalLM.from_pretrained(
                 model_id,
-                torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
+                dtype=torch_dtype,
                 device_map="auto" if torch.cuda.is_available() else None,
             )
+
+            # --------------------------------------------------------
+            # IMPORTANT:
+            # SDPA attention backend CANNOT return attention weights.
+            # To use attention analysis, switch to eager attention.
+            # --------------------------------------------------------
+            if hasattr(self.model.config, "attn_implementation"):
+                try:
+                    self.model.config.attn_implementation = "eager"
+                except Exception:
+                    pass
 
         else:
             raise ValueError("Either provide model_id OR both model and tokenizer.")
 
-        # Ensure the model returns hidden states & attention when requested
+        # Disable hidden states + attentions by default
         self.model.config.output_hidden_states = False
         self.model.config.output_attentions = False
 
-    # ------------------------------------------------------------
+    # ============================================================
     # Standard Generation
-    # ------------------------------------------------------------
+    # ============================================================
     def generate(self, prompt: str, max_new_tokens: int = 50):
         """
-        Simple wrapper for model.generate()
+        Wrapper around model.generate() for normal LLM output.
         """
         inputs = self.tokenizer(prompt, return_tensors="pt").to(self.device)
+
         outputs = self.model.generate(
             **inputs,
             max_new_tokens=max_new_tokens,
             do_sample=False,
         )
+
         return self.tokenizer.decode(outputs[0], skip_special_tokens=True)
 
-    # ------------------------------------------------------------
+    # ============================================================
     # Dynamic RSA + Attention Analysis
-    # ------------------------------------------------------------
+    # ============================================================
     def generate_with_activations(self, prompt: str, max_new_tokens: int = 30):
         """
-        Manual token-by-token generation that records:
-            - hidden_states for each layer at each step
-            - attention matrices at each step
-            - generated token IDs
+        Token-by-token generation that returns:
+            • text output
+            • generated token IDs
+            • hidden states for every step & layer
+            • attention matrices for every step & layer
 
-        Returns:
+        Returns a dictionary:
             {
-                "text": decoded_output,
-                "tokens": tensor(shape=[1, seq_len]),
-                "hidden_states": list[step][layers][batch, seq, dim],
-                "attentions": list[step][layers][batch, heads, seq, seq]
+                "text": ...,
+                "tokens": ...,
+                "hidden_states": [...],
+                "attentions": [...]
             }
         """
 
-        # Enable hidden states + attention
+        # Enable activation capture
         self.model.config.output_hidden_states = True
         self.model.config.output_attentions = True
 
-        # Tokenize input
+        # Tokenize input prompt
         inputs = self.tokenizer(prompt, return_tensors="pt").to(self.device)
         generated_ids = inputs["input_ids"]
 
         hidden_states_over_time = []
         attentions_over_time = []
 
+        # ------------------------------------------
+        # Manual autoregressive generation loop
+        # ------------------------------------------
         for _ in range(max_new_tokens):
 
             outputs = self.model(
@@ -106,20 +136,23 @@ class TransformersLLM:
                 output_attentions=True,
             )
 
-            # Store activations
+            # Save activations
             hidden_states_over_time.append(outputs.hidden_states)
             attentions_over_time.append(outputs.attentions)
 
-            # Greedy decode
+            # Greedy decoding (deterministic)
             next_token = torch.argmax(outputs.logits[:, -1, :], dim=-1).unsqueeze(0)
+
             generated_ids = torch.cat([generated_ids, next_token], dim=-1)
 
-            # End if EOS
+            # Stop if EOS emitted
             if next_token.item() == self.tokenizer.eos_token_id:
                 break
 
-        # Decode result
-        decoded_text = self.tokenizer.decode(generated_ids[0], skip_special_tokens=True)
+        # Decode final text
+        decoded_text = self.tokenizer.decode(
+            generated_ids[0], skip_special_tokens=True
+        )
 
         return {
             "text": decoded_text,
