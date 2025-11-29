@@ -1,161 +1,118 @@
+# evaluation_runner.py
 import os
-import json
-import time
+import csv
 import numpy as np
-import pandas as pd
+import networkx as nx
 import matplotlib.pyplot as plt
 import seaborn as sns
+from graphs import create_line_graph, create_tree_graph, create_clustered_graph, NODE_PREFIX
 
-from graphs import (
-    create_line_graph,
-    create_grid_graph,
-    create_random_graph,
-    create_tree_graph,
-    create_fully_connected_graph
-)
-
-from task_generator import generate_task
-from model_reasoning import run_model_reasoning
-from evaluation_metrics import (
-    compute_exact_match,
-    compute_edit_distance,
-    compute_path_length_difference,
-    compute_reward_accuracy,
-)
-from attention_analysis import extract_attention_scores
-
-
-# --------------------------------------------------------
-#                CONFIGURATION
-# --------------------------------------------------------
-
+# -----------------------------
+# Configuration
+# -----------------------------
 EXPERIMENTS = [
-    {
-        "name": "line_graph_experiment",
-        "graph_fn": create_line_graph,
-        "params": {"n_nodes": 7},
-        "num_tasks": 20,
-    },
-    {
-        "name": "grid_graph_experiment",
-        "graph_fn": create_grid_graph,
-        "params": {"rows": 3, "cols": 3},
-        "num_tasks": 20,
-    },
-    {
-        "name": "random_graph_experiment",
-        "graph_fn": create_random_graph,
-        "params": {"n_nodes": 10, "edge_prob": 0.25},
-        "num_tasks": 20,
-    },
+    {"name": "line_graph", "builder": create_line_graph},
+    {"name": "tree_graph", "builder": create_tree_graph},
+    {"name": "clustered_graph", "builder": create_clustered_graph},
 ]
 
 OUTPUT_DIR = "evaluation_results"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
-HEATMAP_DIR = os.path.join(OUTPUT_DIR, "attention_heatmaps")
-os.makedirs(HEATMAP_DIR, exist_ok=True)
 
+# -----------------------------
+# Utility Functions
+# -----------------------------
 
-# --------------------------------------------------------
-#              RUN EXPERIMENT
-# --------------------------------------------------------
+def normalize_path(path, start_node=None):
+    """
+    Normalize a path:
+    - Ensure it starts at the start_node (default first node)
+    - Remove consecutive duplicates
+    """
+    if not path:
+        return []
 
-def run_single_experiment(exp_cfg):
-    exp_name = exp_cfg["name"]
-    graph_fn = exp_cfg["graph_fn"]
-    graph_params = exp_cfg["params"]
-    num_tasks = exp_cfg["num_tasks"]
+    if start_node and path[0] != start_node:
+        path = [start_node] + path
 
-    print(f"\nRunning experiment: {exp_name}")
+    normalized = [path[0]]
+    for node in path[1:]:
+        if node != normalized[-1]:
+            normalized.append(node)
+    return normalized
 
-    # Create graph
-    G = graph_fn(**graph_params)
+def compute_reward_regret(path, rewards, optimal_reward):
+    """
+    Reward regret = optimal_reward - sum of rewards along the path
+    """
+    path_reward = sum(rewards.get(node, 0) for node in path)
+    return optimal_reward - path_reward
 
-    # Store metrics for all tasks
-    all_results = []
+def compute_value_regret(path_values, optimal_values):
+    """
+    Computes per-node value regret
+    """
+    path_len = min(len(path_values), len(optimal_values))
+    regret = [optimal_values[i] - path_values[i] for i in range(path_len)]
+    return regret
 
-    for i in range(num_tasks):
-        task = generate_task(G)
-
-        # Run model
-        model_output, attention = run_model_reasoning(task)
-
-        # Compute metrics
-        result = {
-            "experiment": exp_name,
-            "task_id": i,
-            "task": task,
-            "model_output": model_output,
-            "exact_match": compute_exact_match(task["gold_path"], model_output),
-            "edit_distance": compute_edit_distance(task["gold_path"], model_output),
-            "path_length_diff": compute_path_length_difference(task["gold_path"], model_output),
-            "reward_accuracy": compute_reward_accuracy(task, model_output),
-        }
-
-        all_results.append(result)
-
-        # ---- Save attention heatmap ----
-        if attention is not None:
-            save_attention_heatmap(attention, exp_name, i)
-
-    return pd.DataFrame(all_results)
-
-
-# --------------------------------------------------------
-#         SAVE ATTENTION HEATMAPS
-# --------------------------------------------------------
-
-def save_attention_heatmap(attention_matrix, exp_name, task_id):
-    attention = np.array(attention_matrix)
-
-    plt.figure(figsize=(6, 5))
-    sns.heatmap(attention, cmap="viridis")
-    plt.title(f"Attention Heatmap - {exp_name} - Task {task_id}")
-    plt.xlabel("Key Tokens")
-    plt.ylabel("Query Tokens")
-
-    heatmap_path = os.path.join(
-        HEATMAP_DIR, f"{exp_name}_task_{task_id}_attention.png"
-    )
-    plt.savefig(heatmap_path)
+def generate_attention_heatmap(attention_matrix, nodes, output_file):
+    """
+    Plot and save attention heatmap using Seaborn
+    """
+    plt.figure(figsize=(8, 6))
+    sns.heatmap(attention_matrix, xticklabels=nodes, yticklabels=nodes,
+                annot=True, fmt=".2f", cmap="viridis")
+    plt.title("Attention Heatmap")
+    plt.tight_layout()
+    plt.savefig(output_file)
     plt.close()
 
+# -----------------------------
+# Experiment Runner
+# -----------------------------
 
-# --------------------------------------------------------
-#          MASTER RUNNER
-# --------------------------------------------------------
+def run_experiment(exp):
+    # --- Build Graph ---
+    G = exp["builder"]()
+    nodes = list(G.nodes)
+    rewards = nx.get_node_attributes(G, "reward")
+    optimal_reward = max(rewards.values())
+    start_node = nodes[0]
 
-def run_all_experiments():
-    print("\n================ RUNNING ALL EXPERIMENTS ================\n")
-    all_dfs = []
+    # --- Path Generation (placeholder) ---
+    # Replace this with your model's output path
+    example_path = nodes  # Example: visiting all nodes sequentially
+    normalized_path = normalize_path(example_path, start_node=start_node)
 
+    # --- Metrics ---
+    path_values = [rewards.get(node, 0) for node in normalized_path]
+    reward_regret = compute_reward_regret(normalized_path, rewards, optimal_reward)
+    value_regret = compute_value_regret(path_values, [optimal_reward]*len(normalized_path))
+
+    # --- Attention Heatmap (placeholder) ---
+    # Replace with real attention weights from your model
+    attention_matrix = np.random.rand(len(nodes), len(nodes))
+    heatmap_file = os.path.join(OUTPUT_DIR, f"{exp['name']}_attention.png")
+    generate_attention_heatmap(attention_matrix, nodes, heatmap_file)
+
+    # --- Save Results to CSV ---
+    csv_file = os.path.join(OUTPUT_DIR, f"{exp['name']}_results.csv")
+    with open(csv_file, "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["node", "reward", "value_regret"])
+        for node, val_reg in zip(normalized_path, value_regret):
+            writer.writerow([node, rewards.get(node, 0), val_reg])
+        writer.writerow([])
+        writer.writerow(["reward_regret", reward_regret])
+
+    print(f"[✔] {exp['name']} completed. Results saved to {csv_file} and {heatmap_file}")
+
+def main():
+    print(f"Running {len(EXPERIMENTS)} experiments...\n")
     for exp in EXPERIMENTS:
-        df = run_single_experiment(exp)
-        all_dfs.append(df)
-
-        # Save intermediate CSV
-        out_path = os.path.join(OUTPUT_DIR, f"{exp['name']}.csv")
-        df.to_csv(out_path, index=False)
-        print(f"Saved results → {out_path}")
-
-    # Merge all experiments
-    final_df = pd.concat(all_dfs, ignore_index=True)
-
-    final_csv = os.path.join(OUTPUT_DIR, "all_experiments_combined.csv")
-    final_df.to_csv(final_csv, index=False)
-
-    print("\n==========================================================")
-    print("All experiments completed successfully!")
-    print(f"Final merged results saved at: {final_csv}")
-    print("Attention heatmaps saved to:", HEATMAP_DIR)
-    print("==========================================================\n")
-
-    return final_df
-
-
-# --------------------------------------------------------
-#                    MAIN
-# --------------------------------------------------------
+        run_experiment(exp)
+    print("\nAll experiments completed.")
 
 if __name__ == "__main__":
-    run_all_experiments()
+    main()
