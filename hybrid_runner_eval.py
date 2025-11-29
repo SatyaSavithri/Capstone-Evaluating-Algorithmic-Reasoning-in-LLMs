@@ -17,7 +17,7 @@ class TransformersLLM:
     def __init__(self, model_name: str = "microsoft/phi-3-mini-4k-instruct", device: str = "cuda"):
         self.device = device
         logger.info(f"Loading model {model_id} on {device}...")
-        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+        self.tokenizer = AutoTokenizer.from_pretrained(model_id)
         self.model = AutoModelForCausalLM.from_pretrained(
             model_name,
             device_map="auto",
