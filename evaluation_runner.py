@@ -1,12 +1,18 @@
 # evaluation_runner.py
 import os
+import sys
 import torch
+import argparse
 import pandas as pd
 from datetime import datetime
 from graphs import create_line_graph, create_tree_graph, create_clustered_graph
-from hybrid_runner_eval import run_hybrid_eval  # our new compatible hybrid runner
+from hybrid_runner_eval import run_hybrid  # your new hybrid_runner_eval.py
+from rsa_analysis import rsm_from_embeddings  # make sure this is available
 
-# --- Ground-truth BFS path function ---
+RESULTS_DIR = "./results"
+os.makedirs(RESULTS_DIR, exist_ok=True)
+
+
 def bfs_optimal_path_to_max_reward(G, start_node):
     """Compute BFS path from start node to node with maximum reward."""
     from collections import deque
@@ -23,58 +29,83 @@ def bfs_optimal_path_to_max_reward(G, start_node):
         if node not in visited:
             visited.add(node)
             for neighbor in G.neighbors(node):
-                if neighbor not in visited:
-                    queue.append(path + [neighbor])
+                new_path = list(path)
+                new_path.append(neighbor)
+                queue.append(new_path)
     return [start_node]  # fallback
 
-# --- Experiment definitions ---
-EXPERIMENTS = [
-    ("n7line", create_line_graph),
-    ("n7tree", create_tree_graph),
-    ("n15clustered", create_clustered_graph),
-]
 
-RESULTS_DIR = "./results"
-os.makedirs(RESULTS_DIR, exist_ok=True)
-
-def run_experiment(exp_name, graph_fn, device="cuda"):
-    G = graph_fn()
-    start_node = "Room 1"
+def run_experiment(graph_name, G, model_wrapper, start_node="Room 1", max_new_tokens=20):
+    """Run a single experiment: generate LLM outputs and compute metrics."""
     try:
-        # Ground-truth BFS path
-        gt_path = bfs_optimal_path_to_max_reward(G, start_node)
-        print(f"[INFO] Ground-truth BFS path: {gt_path}")
-
-        # Run hybrid evaluation
-        activations, success = run_hybrid_eval(G, start_node=start_node, device=device)
-
-        # Save activations safely
-        act_file = os.path.join(RESULTS_DIR, f"{exp_name}_activations_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pt")
-        torch.save(activations, act_file)
-        print(f"[INFO] Saved activations to {act_file}")
-
-        return {"experiment": exp_name, "success": success, "gt_path": gt_path}
-
+        print(f"[INFO] Ground-truth BFS path: {bfs_optimal_path_to_max_reward(G, start_node)}")
+        print("[INFO] Generating LLM activations...")
+        
+        hybrid_out = run_hybrid(model_wrapper, G, start_node=start_node, max_new_tokens=max_new_tokens)
+        
+        llm_activations = hybrid_out.get("activations")
+        attention_matrices = hybrid_out.get("attentions")
+        
+        # Save activations and attention matrices as binary
+        torch.save(llm_activations, os.path.join(RESULTS_DIR, f"{graph_name}_activations.pt"))
+        torch.save(attention_matrices, os.path.join(RESULTS_DIR, f"{graph_name}_attentions.pt"))
+        
+        # Compute RSM metrics safely
+        if llm_activations is not None and len(llm_activations) > 0:
+            empirical_rsm = rsm_from_embeddings(llm_activations)
+        else:
+            empirical_rsm = None
+        
+        return {
+            "experiment": graph_name,
+            "success": True,
+            "gt_path": bfs_optimal_path_to_max_reward(G, start_node),
+            "rsm": empirical_rsm
+        }
     except Exception as e:
-        print(f"[ERROR] Experiment {exp_name} failed: {e}")
-        return {"experiment": exp_name, "success": False, "error": str(e)}
+        print(f"[ERROR] Experiment {graph_name} failed: {e}")
+        return {
+            "experiment": graph_name,
+            "success": False,
+            "error": str(e)
+        }
+
 
 def main():
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--graph", type=str, default="all",
+                        choices=["line_graph", "tree_graph", "clustered_graph", "all"])
+    parser.add_argument("--max_new_tokens", type=int, default=20)
+    args = parser.parse_args()
+
+    # Load graphs
+    graphs = {
+        "n7line": create_line_graph(),
+        "n7tree": create_tree_graph(),
+        "n15clustered": create_clustered_graph()
+    }
+
+    selected_graphs = {k: v for k, v in graphs.items() if args.graph == "all" or args.graph in k}
+
+    # Load LLM model wrapper
+    from hybrid_runner_eval import TransformersLLM  # new wrapper
+    model_wrapper = TransformersLLM(model_id="microsoft/phi-3-mini-4k-instruct", device="cuda")
+    
     results = []
-
-    print(f"[INFO] Running evaluation on device: {device}")
-
-    for exp_name, graph_fn in EXPERIMENTS:
-        print(f"[INFO] Running graph '{exp_name}' from start node 'Room 1'")
-        res = run_experiment(exp_name, graph_fn, device=device)
-        results.append(res)
+    for graph_name, G in selected_graphs.items():
+        print(f"[INFO] Running graph '{graph_name}' from start node 'Room 1'")
+        exp_result = run_experiment(graph_name, G, model_wrapper, start_node="Room 1",
+                                    max_new_tokens=args.max_new_tokens)
+        results.append(exp_result)
 
     # Save results CSV
-    csv_file = os.path.join(RESULTS_DIR, f"evaluation_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv")
-    pd.DataFrame(results).to_csv(csv_file, index=False)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    results_df = pd.DataFrame(results)
+    csv_file = os.path.join(RESULTS_DIR, f"evaluation_results_{timestamp}.csv")
+    results_df.to_csv(csv_file, index=False)
     print(f"[INFO] Results saved to {csv_file}")
     print("[INFO] All experiments completed!")
+
 
 if __name__ == "__main__":
     main()
