@@ -9,16 +9,17 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import seaborn as sns
-from scipy.spatial.distance import pdist, squareform
-from scipy.stats import spearmanr
+import torch
 
 from graphs import create_line_graph, create_tree_graph, create_clustered_graph
 from planner import bfs_optimal_path_to_max_reward
 from attention_analysis import attention_to_room_ratio
 from rsa_analysis import build_theoretical_rsm, compute_room_embeddings_from_hidden_states, rsm_from_embeddings, rsa_correlation
 from utils import parse_final_json_path
-from hybrid_runner import TransformersLLM, run_hybrid
 from prompts import base_description_text, scratchpad_prompt
+
+# Import only the run_hybrid function from hybrid_runner (safe at top-level)
+from hybrid_runner import run_hybrid
 
 # -----------------------------
 # Configuration
@@ -55,7 +56,6 @@ def compute_value_regret(path_values, optimal_values):
     return [optimal_values[i] - path_values[i] for i in range(path_len)]
 
 def sequence_edit_distance(path1, path2):
-    """Levenshtein distance"""
     n, m = len(path1), len(path2)
     dp = np.zeros((n+1, m+1), dtype=int)
     for i in range(n+1):
@@ -121,22 +121,23 @@ def run_experiment(exp, model_wrapper):
     # ---------------------------
     # Internal metrics
     # ---------------------------
-    activations = model_wrapper.generate_with_activations(scratchpad_prompt(base_description_text(G), "valuePath"))
+    activations = model_wrapper.generate_with_activations(
+        scratchpad_prompt(base_description_text(G), "valuePath")
+    )
     hidden_states = torch.cat([h.detach() for h in activations["hidden_states"]], dim=0).cpu().numpy()
-    positions_map = {n:[i for i in range(hidden_states.shape[0])] for n in nodes}  # Placeholder: all positions
+    positions_map = {n:[i for i in range(hidden_states.shape[0])] for n in nodes}  # Placeholder mapping
     embs = compute_room_embeddings_from_hidden_states(hidden_states, positions_map)
     emp_rsm = rsm_from_embeddings(embs)
     theo_rsm = build_theoretical_rsm(G, nodes)
     rsa_r, rsa_p = rsa_correlation(emp_rsm, theo_rsm)
 
     attn_ratio = None
-    if hasattr(model_wrapper, "generate_with_activations"):
-        attentions = activations["attentions"]
-        if len(attentions)>0:
-            attn_ratio = attention_to_room_ratio(attentions[-1][0].cpu().numpy(), positions_map)
+    attentions = activations["attentions"]
+    if len(attentions)>0:
+        attn_ratio = attention_to_room_ratio(attentions[-1][0].cpu().numpy(), positions_map)
 
     # ---------------------------
-    # Save CSV
+    # Save per-experiment CSV
     # ---------------------------
     csv_file = os.path.join(OUTPUT_DIR, f"{exp['name']}_results.csv")
     with open(csv_file, "w", newline="") as f:
@@ -154,7 +155,9 @@ def run_experiment(exp, model_wrapper):
     # ---------------------------
     # Heatmaps
     # ---------------------------
-    generate_attention_heatmap(attentions[-1][0].cpu().numpy(), nodes, os.path.join(OUTPUT_DIR, f"{exp['name']}_attention.png"))
+    if len(attentions)>0:
+        generate_attention_heatmap(attentions[-1][0].cpu().numpy(), nodes,
+                                   os.path.join(OUTPUT_DIR, f"{exp['name']}_attention.png"))
     generate_rsm_heatmap(emp_rsm, nodes, os.path.join(OUTPUT_DIR, f"{exp['name']}_rsm.png"))
 
     # ---------------------------
@@ -175,11 +178,12 @@ def run_experiment(exp, model_wrapper):
 # -----------------------------
 # Main
 # -----------------------------
-import torch
-
 def main():
+    # Import TransformersLLM inside main to avoid ImportError
+    from hybrid_runner import TransformersLLM
+
     # Load model
-    model_id = "microsoft/phi-3-mini-4k-instruct"  # or change to your choice
+    model_id = "microsoft/phi-3-mini-4k-instruct"  # Change if desired
     model_wrapper = TransformersLLM(model_id)
 
     summary_metrics = []
