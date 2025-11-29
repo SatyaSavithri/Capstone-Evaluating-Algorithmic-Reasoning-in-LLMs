@@ -19,7 +19,7 @@ class TransformersLLM:
         logger.info(f"Loading model {model_id} on {device}...")
         self.tokenizer = AutoTokenizer.from_pretrained(model_id)
         self.model = AutoModelForCausalLM.from_pretrained(
-            model_name,
+            model_id,
             device_map="auto",
             torch_dtype=torch.float16,
         )
