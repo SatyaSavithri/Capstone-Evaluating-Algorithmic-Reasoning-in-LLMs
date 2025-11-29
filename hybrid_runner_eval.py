@@ -16,7 +16,7 @@ class TransformersLLM:
 
     def __init__(self, model_name: str = "microsoft/phi-3-mini-4k-instruct", device: str = "cuda"):
         self.device = device
-        logger.info(f"Loading model {model_name} on {device}...")
+        logger.info(f"Loading model {model_id} on {device}...")
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
         self.model = AutoModelForCausalLM.from_pretrained(
             model_name,
@@ -25,7 +25,7 @@ class TransformersLLM:
         )
         self.model.to(device)
         self.model.eval()
-        logger.info(f"Model {model_name} loaded.")
+        logger.info(f"Model {model_id} loaded.")
 
     def generate(self, prompt: str, max_new_tokens: int = 20):
         """Generates output tokens while capturing hidden states and attentions."""
