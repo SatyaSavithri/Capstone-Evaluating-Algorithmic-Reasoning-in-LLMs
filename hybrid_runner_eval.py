@@ -23,30 +23,22 @@ class TransformersLLM:
         self.model.eval()
         logger.info(f"Model {model_id} loaded.")
 
-    def generate(self, prompt, max_new_tokens=20):
-        """Generates text with model and returns hidden states and attentions."""
+    def get_activations(self, prompt):
+        """Forward pass through model to get hidden states and attentions."""
         inputs = self.tokenizer(prompt, return_tensors="pt").to(self.device)
         with torch.no_grad():
-            output = self.model.generate(
-                **inputs,
-                max_new_tokens=max_new_tokens,
-                return_dict_in_generate=True,
-                output_hidden_states=True,
-                output_attentions=True,
-            )
-        # Extract hidden states and attentions from the model output
-        hidden_states = output.decoder_hidden_states if hasattr(output, "decoder_hidden_states") else output.hidden_states
-        attentions = output.decoder_attentions if hasattr(output, "decoder_attentions") else output.attentions
-        # Return a simple namespace-like object
-        class Output:
-            pass
-        out = Output()
-        out.hidden_states = hidden_states
-        out.attentions = attentions
-        return out
+            output = self.model(**inputs)
+
+        # Hidden states: tuple of (layer_count+1) tensors of shape [batch, seq_len, hidden]
+        hidden_states = output.hidden_states
+        # Take mean over sequence length to get fixed-size vector
+        last_hidden = hidden_states[-1]  # (batch, seq_len, hidden)
+        pooled = last_hidden.mean(dim=1).squeeze(0)  # (hidden,)
+        attentions = output.attentions  # tuple of tensors
+        return pooled, attentions
 
 
-def run_hybrid(model_wrapper, G, max_new_tokens=20):
+def run_hybrid(model_wrapper, G):
     """
     Run a hybrid experiment on a graph with LLM.
     Returns activations and attentions dictionaries for all nodes.
@@ -57,18 +49,12 @@ def run_hybrid(model_wrapper, G, max_new_tokens=20):
     for node in G.nodes():
         prompt = f"Navigate to {node}."
         try:
-            output = model_wrapper.generate(prompt, max_new_tokens=max_new_tokens)
-            # Mean-pool over sequence length to get fixed-size representation
-            last_hidden = output.hidden_states[-1]  # (batch, seq_len, hidden)
-            if last_hidden.dim() == 3:
-                pooled = last_hidden.mean(dim=1).squeeze(0)  # (hidden,)
-            else:
-                pooled = last_hidden.squeeze(0)
+            pooled, node_attentions = model_wrapper.get_activations(prompt)
             activations[node] = pooled
-            attentions[node] = output.attentions
+            attentions[node] = node_attentions
         except Exception as e:
             logger.warning(f"Failed to generate for node {node}: {e}")
-            activations[node] = torch.zeros(model_wrapper.model.config.hidden_size)
+            activations[node] = torch.zeros(model_wrapper.model.config.hidden_size, device=model_wrapper.device)
             attentions[node] = []
 
     return activations, attentions
