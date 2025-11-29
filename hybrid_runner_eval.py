@@ -10,7 +10,7 @@ def run_hybrid(model_wrapper, G: nx.Graph, max_new_tokens: int = 20) -> Tuple[Li
     Args:
         model_wrapper (dict): Dictionary containing 'model', 'tokenizer', 'device'
         G (nx.Graph): Graph to traverse
-        max_new_tokens (int): Number of tokens to generate for each node
+        max_new_tokens (int): Max nodes to process (acts as cutoff)
 
     Returns:
         activations (List[torch.Tensor]): List of hidden states for each node
@@ -23,7 +23,6 @@ def run_hybrid(model_wrapper, G: nx.Graph, max_new_tokens: int = 20) -> Tuple[Li
     activations = []
     attention_matrices = []
 
-    # Example traversal: BFS from "Room 1"
     start_node = "Room 1"
     queue = [start_node]
     visited = set()
@@ -34,25 +33,30 @@ def run_hybrid(model_wrapper, G: nx.Graph, max_new_tokens: int = 20) -> Tuple[Li
             continue
         visited.add(node)
 
-        # Prepare input prompt (can be customized per node)
         prompt = f"Navigate to {node}."
         inputs = tokenizer(prompt, return_tensors="pt").to(device)
 
-        # Run model forward pass with attention outputs
         with torch.no_grad():
             outputs = model(**inputs, output_attentions=True, output_hidden_states=True)
-            hidden_states = outputs.hidden_states[-1][:, 0, :]  # CLS-like representation
-            attentions = torch.stack(outputs.attentions)        # Stack all layers
+            # Extract last hidden state (CLS token-like)
+            if outputs.hidden_states is not None:
+                hidden_states = outputs.hidden_states[-1][:, 0, :]
+                activations.append(hidden_states.squeeze(0).cpu())
+            else:
+                activations.append(torch.zeros(model.config.hidden_size))  # fallback
 
-        activations.append(hidden_states.squeeze(0).cpu())
-        attention_matrices.append(attentions.cpu())
+            # Extract attentions safely
+            if outputs.attentions is not None:
+                attention_matrices.append(torch.stack(outputs.attentions).cpu())
+            else:
+                # Append empty tensor if attentions are None
+                attention_matrices.append(torch.zeros(1, 1, 1, 1))
 
-        # Add neighbors to queue for BFS
+        # BFS neighbors
         for neighbor in G.neighbors(node):
             if neighbor not in visited and neighbor not in queue:
                 queue.append(neighbor)
 
-        # Limit generation to max_new_tokens (optional)
         if len(activations) >= max_new_tokens:
             break
 
