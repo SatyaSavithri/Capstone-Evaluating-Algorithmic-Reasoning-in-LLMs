@@ -7,15 +7,12 @@ import pandas as pd
 from graphs import create_line_graph, create_tree_graph, create_clustered_graph
 from hybrid_runner_eval import TransformersLLM, run_hybrid
 
-# Setup logging
 logging.basicConfig(level=logging.INFO, format='%(levelname)s:%(name)s:%(message)s')
 logger = logging.getLogger(__name__)
 
-# Directory for results
 RESULTS_DIR = "./results"
 os.makedirs(RESULTS_DIR, exist_ok=True)
 
-# Experiments configuration
 EXPERIMENTS = [
     ("n7line", create_line_graph),
     ("n7tree", create_tree_graph),
@@ -23,13 +20,10 @@ EXPERIMENTS = [
 ]
 
 def bfs_optimal_path_to_max_reward(G, start_node):
-    """Compute BFS path from start node to node with maximum reward."""
     from collections import deque
-
     visited = set()
     queue = deque([[start_node]])
     max_reward_node = max(G.nodes, key=lambda n: G.nodes[n].get("reward", 0))
-
     while queue:
         path = queue.popleft()
         node = path[-1]
@@ -38,18 +32,13 @@ def bfs_optimal_path_to_max_reward(G, start_node):
         if node not in visited:
             visited.add(node)
             for neighbor in G.neighbors(node):
-                new_path = list(path)
-                new_path.append(neighbor)
-                queue.append(new_path)
-    return [start_node]  # fallback
+                queue.append(path + [neighbor])
+    return [start_node]
 
 def main():
-    # Initialize model
-    model_name = "microsoft/phi-3-mini-4k-instruct"
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    logger.info(f"Loading model {model_name} on {device}...")
+    model_name = "microsoft/phi-3-mini-4k-instruct"
     model_wrapper = TransformersLLM(model_name=model_name, device=device)
-    logger.info(f"Model {model_name} loaded.")
 
     results = []
 
@@ -60,11 +49,10 @@ def main():
         gt_path = bfs_optimal_path_to_max_reward(G, start_node)
         logger.info(f"Ground-truth BFS path: {gt_path}")
 
-        # Generate activations and attentions
         try:
             activations, attentions = run_hybrid(model_wrapper, G, start_node=start_node)
-            
-            # Save as PyTorch binary
+
+            # Save as .pt binaries
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             act_file = os.path.join(RESULTS_DIR, f"{exp_name}_activations_{timestamp}.pt")
             att_file = os.path.join(RESULTS_DIR, f"{exp_name}_attentions_{timestamp}.pt")
@@ -72,14 +60,6 @@ def main():
             torch.save(attentions, att_file)
             logger.info(f"Saved activations: {act_file}")
             logger.info(f"Saved attentions: {att_file}")
-
-            # Convert activations to CSV for inspection
-            act_csv_file = os.path.join(RESULTS_DIR, f"{exp_name}_activations_{timestamp}.csv")
-            # Flatten tensors for CSV
-            act_data = {node: act.cpu().numpy().flatten() for node, act in activations.items()}
-            df = pd.DataFrame.from_dict(act_data, orient="index")
-            df.to_csv(act_csv_file)
-            logger.info(f"Activations CSV saved: {act_csv_file}")
 
             results.append({
                 "experiment": exp_name,
