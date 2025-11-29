@@ -6,11 +6,14 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-from graph_generator import (
+from graphs import (
     create_line_graph,
     create_grid_graph,
     create_random_graph,
+    create_tree_graph,
+    create_fully_connected_graph
 )
+
 from task_generator import generate_task
 from model_reasoning import run_model_reasoning
 from evaluation_metrics import (
