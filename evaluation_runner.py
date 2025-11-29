@@ -6,10 +6,10 @@ import pandas as pd
 from scipy.spatial.distance import pdist, squareform
 
 from transformers import AutoModelForCausalLM, AutoTokenizer
-from hybrid_runner import run_hybrid  # Only function import, not TransformersLLM
+from hybrid_runner import run_hybrid, bfs_optimal_path_to_max_reward  # Only function imports
 
-from graph_generator import create_line_graph, create_tree_graph, create_clustered_graph
-from hybrid_runner import bfs_optimal_path_to_max_reward
+# Import graphs from your graphs.py
+from graphs import create_line_graph, create_tree_graph, create_clustered_graph
 
 RESULTS_DIR = "./results"
 os.makedirs(RESULTS_DIR, exist_ok=True)
