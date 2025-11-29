@@ -23,6 +23,7 @@ def traversal_accuracy(pred_path, gt_path):
     return float(pred_path == gt_path)
 
 def sequence_edit_distance(pred_path, gt_path):
+    from difflib import SequenceMatcher
     sm = SequenceMatcher(None, pred_path, gt_path)
     return 1 - sm.ratio()
 
@@ -91,8 +92,8 @@ def run_experiment(exp, model_wrapper, max_new_tokens=20, start_node="Room 1"):
         results["gt_path"] = gt_path
         print(f"[INFO] Ground-truth BFS path: {gt_path}")
 
-        # Hybrid LLM + symbolic
-        hybrid_out = run_hybrid(model_wrapper, G, max_new_tokens=max_new_tokens, start_node=start_node)
+        # Hybrid LLM + symbolic (no start_node here)
+        hybrid_out = run_hybrid(model_wrapper, G, max_new_tokens=max_new_tokens)
         llm_path = hybrid_out.get("best", gt_path)
         results["llm_path"] = llm_path
 
