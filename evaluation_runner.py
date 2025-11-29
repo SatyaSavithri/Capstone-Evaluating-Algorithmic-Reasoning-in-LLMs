@@ -7,7 +7,7 @@ import pandas as pd
 from scipy.spatial.distance import pdist, squareform
 
 from graphs import create_line_graph, create_tree_graph, create_clustered_graph
-from hybrid_runner import run_hybrid  # We use this as-is, no TransformersLLM import
+from hybrid_runner_eval import run_hybrid  # We use this as-is, no TransformersLLM import
 
 # --- Setup logging ---
 logging.basicConfig(level=logging.INFO, format='[%(levelname)s] %(message)s')
