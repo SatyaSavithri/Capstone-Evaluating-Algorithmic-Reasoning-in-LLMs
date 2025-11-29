@@ -1,184 +1,158 @@
-# evaluation_runner.py
 import os
 import json
-import csv
-import difflib
+import time
 import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
 
-from GraphGenerator import generate_all_stimuli
-from models_transformers import TransformersLLM
-from attention_analysis import attention_to_room_ratio
-from hybrid_runner import run_hybrid
-from planner import bfs_optimal_path_to_max_reward
-
-
-# -------------------------------------------------------
-# --- Utility Functions for Metrics ---------------------
-# -------------------------------------------------------
-
-def normalize_path(text):
-    """
-    Extracts a path from model output:
-    Example: "Room 1 -> Room 2 -> Room 5"
-    """
-    text = text.replace(",", " ").replace("->", " ").replace("  ", " ")
-    parts = [p for p in text.split() if p.startswith("Room")]
-    # Convert "Room 2" into consistent string
-    return [" ".join(p.split()[:2]) for p in parts]
+from graph_generator import (
+    create_line_graph,
+    create_grid_graph,
+    create_random_graph,
+)
+from task_generator import generate_task
+from model_reasoning import run_model_reasoning
+from evaluation_metrics import (
+    compute_exact_match,
+    compute_edit_distance,
+    compute_path_length_difference,
+    compute_reward_accuracy,
+)
+from attention_analysis import extract_attention_scores
 
 
-def path_accuracy(pred, gt):
-    return int(pred == gt)
+# --------------------------------------------------------
+#                CONFIGURATION
+# --------------------------------------------------------
+
+EXPERIMENTS = [
+    {
+        "name": "line_graph_experiment",
+        "graph_fn": create_line_graph,
+        "params": {"n_nodes": 7},
+        "num_tasks": 20,
+    },
+    {
+        "name": "grid_graph_experiment",
+        "graph_fn": create_grid_graph,
+        "params": {"rows": 3, "cols": 3},
+        "num_tasks": 20,
+    },
+    {
+        "name": "random_graph_experiment",
+        "graph_fn": create_random_graph,
+        "params": {"n_nodes": 10, "edge_prob": 0.25},
+        "num_tasks": 20,
+    },
+]
+
+OUTPUT_DIR = "evaluation_results"
+os.makedirs(OUTPUT_DIR, exist_ok=True)
+HEATMAP_DIR = os.path.join(OUTPUT_DIR, "attention_heatmaps")
+os.makedirs(HEATMAP_DIR, exist_ok=True)
 
 
-def path_edit_distance(pred, gt):
-    sm = difflib.SequenceMatcher(None, pred, gt)
-    return 1 - sm.ratio() 
+# --------------------------------------------------------
+#              RUN EXPERIMENT
+# --------------------------------------------------------
+
+def run_single_experiment(exp_cfg):
+    exp_name = exp_cfg["name"]
+    graph_fn = exp_cfg["graph_fn"]
+    graph_params = exp_cfg["params"]
+    num_tasks = exp_cfg["num_tasks"]
+
+    print(f"\nRunning experiment: {exp_name}")
+
+    # Create graph
+    G = graph_fn(**graph_params)
+
+    # Store metrics for all tasks
+    all_results = []
+
+    for i in range(num_tasks):
+        task = generate_task(G)
+
+        # Run model
+        model_output, attention = run_model_reasoning(task)
+
+        # Compute metrics
+        result = {
+            "experiment": exp_name,
+            "task_id": i,
+            "task": task,
+            "model_output": model_output,
+            "exact_match": compute_exact_match(task["gold_path"], model_output),
+            "edit_distance": compute_edit_distance(task["gold_path"], model_output),
+            "path_length_diff": compute_path_length_difference(task["gold_path"], model_output),
+            "reward_accuracy": compute_reward_accuracy(task, model_output),
+        }
+
+        all_results.append(result)
+
+        # ---- Save attention heatmap ----
+        if attention is not None:
+            save_attention_heatmap(attention, exp_name, i)
+
+    return pd.DataFrame(all_results)
 
 
-def reward_regret(pred, gt, G):
-    rewards = {n: G.nodes[n]["reward"] for n in G.nodes()}
-    pred_reward = rewards[pred[-1]] if pred else -999
-    gt_reward = rewards[gt[-1]]
-    return gt_reward - pred_reward
+# --------------------------------------------------------
+#         SAVE ATTENTION HEATMAPS
+# --------------------------------------------------------
+
+def save_attention_heatmap(attention_matrix, exp_name, task_id):
+    attention = np.array(attention_matrix)
+
+    plt.figure(figsize=(6, 5))
+    sns.heatmap(attention, cmap="viridis")
+    plt.title(f"Attention Heatmap - {exp_name} - Task {task_id}")
+    plt.xlabel("Key Tokens")
+    plt.ylabel("Query Tokens")
+
+    heatmap_path = os.path.join(
+        HEATMAP_DIR, f"{exp_name}_task_{task_id}_attention.png"
+    )
+    plt.savefig(heatmap_path)
+    plt.close()
 
 
-def prefix_step_accuracy(pred, gt):
-    correct = 0
-    for p, g in zip(pred, gt):
-        if p == g:
-            correct += 1
-        else:
-            break
-    return correct / len(gt)
+# --------------------------------------------------------
+#          MASTER RUNNER
+# --------------------------------------------------------
+
+def run_all_experiments():
+    print("\n================ RUNNING ALL EXPERIMENTS ================\n")
+    all_dfs = []
+
+    for exp in EXPERIMENTS:
+        df = run_single_experiment(exp)
+        all_dfs.append(df)
+
+        # Save intermediate CSV
+        out_path = os.path.join(OUTPUT_DIR, f"{exp['name']}.csv")
+        df.to_csv(out_path, index=False)
+        print(f"Saved results → {out_path}")
+
+    # Merge all experiments
+    final_df = pd.concat(all_dfs, ignore_index=True)
+
+    final_csv = os.path.join(OUTPUT_DIR, "all_experiments_combined.csv")
+    final_df.to_csv(final_csv, index=False)
+
+    print("\n==========================================================")
+    print("All experiments completed successfully!")
+    print(f"Final merged results saved at: {final_csv}")
+    print("Attention heatmaps saved to:", HEATMAP_DIR)
+    print("==========================================================\n")
+
+    return final_df
 
 
-# -------------------------------------------------------
-# --- Attention Processing ------------------------------
-# -------------------------------------------------------
-
-def compute_attention_metric(model, prompt, positions_map):
-    activations = model.generate_with_activations(prompt)
-    all_layers = activations["attentions"]
-
-    # Average over all heads, over all layers → (seq_len, seq_len)
-    layer_avgs = []
-    for layer in all_layers:
-        h, q, k = layer.shape[1], layer.shape[2], layer.shape[3]
-        avg_layer = layer.mean(dim=0)[0]  # (seq_len, seq_len)
-        layer_avgs.append(avg_layer)
-
-    avg_attn_matrix = sum(layer_avgs) / len(layer_avgs)
-    attn = avg_attn_matrix.detach().cpu().numpy()
-
-    return attention_to_room_ratio(attn, positions_map)
-
-
-# -------------------------------------------------------
-# --- Running a Single Method ---------------------------
-# -------------------------------------------------------
-
-def run_condition(model, stimulus, method_name="scratchpad"):
-
-    if method_name == "valuePath":
-        output = model.generate(stimulus["prompt"], max_new_tokens=150)
-
-    elif method_name == "scratchpad":
-        output = model.generate(stimulus["scratchpad_prompt"], max_new_tokens=200)
-
-    elif method_name == "reval":
-        # same input as valuePath; but graph contains updated reward version
-        output = model.generate(stimulus["prompt"], max_new_tokens=150)
-
-    else:
-        raise ValueError(method_name)
-
-    pred = normalize_path(output)
-    gt = stimulus["ground_truth_path"]
-    G = stimulus["raw_graph_data"]
-
-    # --- Metrics ---
-    metrics = {
-        "pred_path": pred,
-        "gt_path": gt,
-        "accuracy": path_accuracy(pred, gt),
-        "edit_distance": path_edit_distance(pred, gt),
-        "reward_regret": reward_regret(pred, gt, G),
-        "prefix_accuracy": prefix_step_accuracy(pred, gt),
-    }
-
-    return metrics, output
-
-
-# -------------------------------------------------------
-# --- Full Evaluation Loop ------------------------------
-# -------------------------------------------------------
-
-def run_all_evaluations(model_id="gpt2"):
-    os.makedirs("results", exist_ok=True)
-
-    print("Generating stimuli...")
-    all_stimuli = generate_all_stimuli()
-    model = TransformersLLM(model_id)
-
-    results = []
-
-    CONDITIONS = ["valuePath", "scratchpad", "rewardReval"]
-    for key, stimulus in all_stimuli.items():
-        graph_type = stimulus["graph_type"]
-        task_type = stimulus["task_type"]
-
-        print(f"\n--- Running {key} ---")
-
-        for cond in CONDITIONS:
-
-            if cond == "rewardReval" and task_type != "rewardReval":
-                continue
-
-            metrics, raw_output = run_condition(model, stimulus, 
-                method_name=("reval" if cond=="rewardReval" else cond)
-            )
-
-            results.append({
-                "graph": graph_type,
-                "task": task_type,
-                "condition": cond,
-                **metrics,
-                "raw_output": raw_output
-            })
-
-        # --- Hybrid evaluation ---
-        hybrid = run_hybrid(model, stimulus["raw_graph_data"])
-        chosen = hybrid["best"]
-        gt = " -> ".join(stimulus["ground_truth_path"])
-        hybrid_correct = int(chosen and (chosen.replace(" ", "") == gt.replace(" ", "")))
-
-        results.append({
-            "graph": graph_type,
-            "task": task_type,
-            "condition": "hybrid",
-            "accuracy": hybrid_correct,
-            "edit_distance": None,
-            "reward_regret": None,
-            "prefix_accuracy": None,
-            "pred_path": chosen,
-            "gt_path": stimulus["ground_truth_path"],
-            "raw_output": hybrid["validator_text"]
-        })
-
-
-    # -------------------------------------------------------
-    # SAVE RESULTS
-    # -------------------------------------------------------
-
-    out_file = "results/metrics_results.csv"
-    with open(out_file, "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=results[0].keys())
-        writer.writeheader()
-        writer.writerows(results)
-
-    print(f"\nSaved evaluation results to {out_file}")
-
+# --------------------------------------------------------
+#                    MAIN
+# --------------------------------------------------------
 
 if __name__ == "__main__":
-    run_all_evaluations("gpt2")
+    run_all_experiments()
