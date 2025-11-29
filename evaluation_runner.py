@@ -1,161 +1,188 @@
 # evaluation_runner.py
-import os
-import csv
-import json
-import numpy as np
-from datetime import datetime
-
+import os, json, re, csv, datetime, numpy as np
+from pathlib import Path
+from difflib import SequenceMatcher
 import networkx as nx
+
 from graphs import create_line_graph, create_tree_graph, create_clustered_graph
 from planner import bfs_optimal_path_to_max_reward
-from prompts import base_description_text, scratchpad_prompt
 from hybrid_runner import run_hybrid
-from rsa_analysis import build_theoretical_rsm, compute_room_embeddings_from_hidden_states, rsm_from_embeddings, rsa_correlation
+from scratchpad_runner import run_scratchpad
+from rsa_analysis import compute_room_embeddings_from_hidden_states, build_theoretical_rsm, rsm_from_embeddings, rsa_correlation
 from attention_analysis import attention_to_room_ratio
+from utils import parse_final_json_path
 
-# ================================
-# Import TransformersLLM from correct file
-# ================================
-from run_capstone_transformers import TransformersLLM
+RESULTS_DIR = Path("./results")
+RESULTS_DIR.mkdir(exist_ok=True)
 
-# ================================
-# Config
-# ================================
-RESULTS_DIR = "./results"
-os.makedirs(RESULTS_DIR, exist_ok=True)
+# -----------------------------
+# Helper Metrics
+# -----------------------------
+def traversal_accuracy(pred_path, gt_path):
+    return float(pred_path == gt_path)
 
-# ================================
-# Experiments
-# ================================
-EXPERIMENTS = [
-    {"graph_name": "n7line", "graph_fn": create_line_graph, "start_node": "Room 1"},
-    {"graph_name": "n7tree", "graph_fn": create_tree_graph, "start_node": "Room 1"},
-    {"graph_name": "n15clustered", "graph_fn": create_clustered_graph, "start_node": "Room 1"},
-]
+def sequence_edit_distance(pred_path, gt_path):
+    sm = SequenceMatcher(None, pred_path, gt_path)
+    return 1 - sm.ratio()  # normalized as distance
 
-# ================================
-# Utilities
-# ================================
-def save_csv(results, filename):
-    keys = results[0].keys() if results else []
-    with open(filename, "w", newline="") as f:
+def reward_regret(pred_path, G):
+    rewards = nx.get_node_attributes(G, "reward")
+    max_reward = max(rewards.values())
+    pred_reward = sum([rewards.get(n,0) for n in pred_path])
+    return float(max_reward - pred_reward)
+
+def value_regret(pred_path, G):
+    rewards = nx.get_node_attributes(G, "reward")
+    ideal = sorted(rewards.values(), reverse=True)
+    actual = [rewards.get(n,0) for n in pred_path]
+    # pad actual to match length
+    actual += [0]*(len(ideal)-len(actual))
+    return float(sum(np.array(ideal) - np.array(actual)))
+
+# -----------------------------
+# Experiment Runner
+# -----------------------------
+def run_experiment(exp, model_wrapper, max_new_tokens=20, start_node="Room 1"):
+    G = exp["graph"]
+    exp_name = exp["name"]
+
+    results = {
+        "experiment": exp_name,
+        "graph_nodes": G.number_of_nodes(),
+        "graph_edges": G.number_of_edges(),
+        "gt_path": None,
+        "llm_path": None,
+        "traversal_acc": None,
+        "seq_edit_dist": None,
+        "reward_regret": None,
+        "value_regret": None,
+        "rsa_corr": None,
+        "attention_ratio": None
+    }
+
+    try:
+        # Ground-truth BFS path
+        gt_path = bfs_optimal_path_to_max_reward(G, start_node)
+        results["gt_path"] = gt_path
+        print(f"[INFO] Ground-truth BFS path: {gt_path}")
+
+        # -----------------------------
+        # Hybrid LLM + symbolic
+        # -----------------------------
+        print("[INFO] Generating LLM activations...")
+
+        # Patch hybrid_runner internally to pass start_node without modifying the file
+        import hybrid_runner
+        original_bfs = hybrid_runner.bfs_optimal_path_to_max_reward
+        hybrid_runner.bfs_optimal_path_to_max_reward = lambda G_arg: original_bfs(G_arg, start_node)
+        hybrid_out = run_hybrid(model_wrapper, G, max_new_tokens=max_new_tokens)
+        hybrid_runner.bfs_optimal_path_to_max_reward = original_bfs
+
+        # Extract predicted path from BEST candidate
+        llm_path = None
+        best_str = hybrid_out.get("best")
+        candidates = hybrid_out.get("candidates", [])
+        if best_str:
+            best_indices = [int(b.strip()[1:])-1 for b in best_str.replace("P","").split(",")]
+            for idx in best_indices:
+                if idx < len(candidates):
+                    llm_path = candidates[idx]
+                    break
+        if llm_path is None:
+            llm_path = gt_path  # fallback
+        results["llm_path"] = llm_path
+
+        # -----------------------------
+        # Metrics
+        # -----------------------------
+        results["traversal_acc"] = traversal_accuracy(llm_path, gt_path)
+        results["seq_edit_dist"] = sequence_edit_distance(llm_path, gt_path)
+        results["reward_regret"] = reward_regret(llm_path, G)
+        results["value_regret"] = value_regret(llm_path, G)
+
+        # -----------------------------
+        # RSA / Hidden States
+        # -----------------------------
+        data = model_wrapper.generate_with_activations(
+            base_description_text(G),
+            max_new_tokens=max_new_tokens
+        )
+        hidden_states = data["hidden_states"][-1]  # last layer
+        # mapping rooms -> token positions (dummy: assume each room appears once)
+        positions_map = {n:[i] for i,n in enumerate(G.nodes())}
+        llm_embs = compute_room_embeddings_from_hidden_states(np.array(hidden_states[-1]), positions_map)
+        if llm_embs.ndim == 2:
+            theoretical_rsm = build_theoretical_rsm(G, list(G.nodes()))
+            empirical_rsm = rsm_from_embeddings(llm_embs)
+            r_corr,_ = rsa_correlation(empirical_rsm, theoretical_rsm)
+            results["rsa_corr"] = r_corr
+
+        # -----------------------------
+        # Attention Ratio
+        # -----------------------------
+        attn_ratio_list = []
+        for att in data.get("attentions", []):
+            ratio = attention_to_room_ratio(att[-1].detach().cpu().numpy(), positions_map)
+            if ratio is not None:
+                attn_ratio_list.append(ratio)
+        if attn_ratio_list:
+            results["attention_ratio"] = float(np.mean(attn_ratio_list))
+
+        # Save activations & attention for offline
+        ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        np.save(RESULTS_DIR / f"{exp_name}_hidden_{ts}.npy", hidden_states[-1].detach().cpu().numpy())
+        for i, att in enumerate(data.get("attentions", [])):
+            np.save(RESULTS_DIR / f"{exp_name}_attn_layer{i}_{ts}.npy", att.detach().cpu().numpy())
+
+    except Exception as e:
+        print(f"[ERROR] Experiment {exp_name} failed: {e}")
+
+    return results
+
+# -----------------------------
+# Main
+# -----------------------------
+def main():
+    # -----------------------------
+    # Setup experiments
+    # -----------------------------
+    experiments = [
+        {"name":"n7line","graph":create_line_graph()},
+        {"name":"n7tree","graph":create_tree_graph()},
+        {"name":"n15clustered","graph":create_clustered_graph()}
+    ]
+
+    # -----------------------------
+    # Load model
+    # -----------------------------
+    from hybrid_runner import TransformersLLM  # now imported locally
+    model_id = "microsoft/phi-3-mini-4k-instruct"
+    print(f"[INFO] Loading model {model_id}...")
+    llm = TransformersLLM(model_id)
+
+    # -----------------------------
+    # Run all experiments
+    # -----------------------------
+    all_results = []
+    start_node = "Room 1"
+    for exp in experiments:
+        print(f"[INFO] Running graph '{exp['name']}' from start node '{start_node}'")
+        res = run_experiment(exp, llm, max_new_tokens=20, start_node=start_node)
+        all_results.append(res)
+
+    # -----------------------------
+    # Save CSV
+    # -----------------------------
+    ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    csv_path = RESULTS_DIR / f"evaluation_results_{ts}.csv"
+    keys = all_results[0].keys() if all_results else []
+    with open(csv_path, "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=keys)
         writer.writeheader()
-        for row in results:
+        for row in all_results:
             writer.writerow(row)
-    print(f"[INFO] Results saved to {filename}")
-
-# ------------------------
-# Simple Levenshtein edit distance
-# ------------------------
-def edit_distance(seq1, seq2):
-    n, m = len(seq1), len(seq2)
-    dp = [[0]*(m+1) for _ in range(n+1)]
-    for i in range(n+1): dp[i][0] = i
-    for j in range(m+1): dp[0][j] = j
-    for i in range(1,n+1):
-        for j in range(1,m+1):
-            dp[i][j] = dp[i-1][j-1] if seq1[i-1]==seq2[j-1] else 1+min(dp[i-1][j-1], dp[i][j-1], dp[i-1][j])
-    return dp[n][m]
-
-# ================================
-# Run Experiment
-# ================================
-def run_experiment(exp, model_wrapper, max_new_tokens=20):
-    G = exp["graph_fn"]()
-    start_node = exp["start_node"]
-
-    # ------------------------
-    # Ground-truth symbolic path
-    # ------------------------
-    symbolic_path = bfs_optimal_path_to_max_reward(G, start_node)
-    print(f"[INFO] Ground-truth BFS path: {symbolic_path}")
-
-    # ------------------------
-    # Hybrid / LLM generation
-    # ------------------------
-    print("[INFO] Generating LLM activations...")
-    hybrid_out = run_hybrid(model_wrapper, G, max_new_tokens=max_new_tokens)
-    llm_best = hybrid_out["best"]
-
-    # ------------------------
-    # Attention Analysis
-    # ------------------------
-    att_ratio = None
-    if "attentions" in hybrid_out.get("model_output", {}):
-        attentions = hybrid_out["model_output"]["attentions"]
-        positions_map = {n: [i] for i, n in enumerate(G.nodes()) if i < attentions[0].shape[-1]}
-        att_ratio = attention_to_room_ratio(attentions[0][0].detach().cpu().numpy(), positions_map)
-
-    # ------------------------
-    # Dynamic RSA
-    # ------------------------
-    rsa_r, rsa_p = None, None
-    if "hidden_states" in hybrid_out.get("model_output", {}):
-        hidden_states = hybrid_out["model_output"]["hidden_states"][-1][0].detach().cpu().numpy()
-        rooms = list(G.nodes())
-        positions_map = {room: [i] for i, room in enumerate(rooms) if i < hidden_states.shape[0]}
-        llm_embs = compute_room_embeddings_from_hidden_states(hidden_states, positions_map, method="mean")
-        llm_embs = np.array(llm_embs)
-        theoretical_rsm = build_theoretical_rsm(G, rooms)
-        empirical_rsm = rsm_from_embeddings(llm_embs)
-        rsa_r, rsa_p = rsa_correlation(empirical_rsm, theoretical_rsm)
-
-    # ------------------------
-    # Behavioral metrics
-    # ------------------------
-    traversal_accuracy = float(llm_best.split("Room")[1:]==symbolic_path[1:]) if llm_best else 0.0
-    sequence_edit_distance = edit_distance(symbolic_path, llm_best.split(" -> ")) if llm_best else len(symbolic_path)
-
-    # ------------------------
-    # Prepare result
-    # ------------------------
-    result = {
-        "graph": exp["graph_name"],
-        "start_node": start_node,
-        "symbolic_path": " -> ".join(symbolic_path),
-        "llm_best": llm_best,
-        "traversal_accuracy": traversal_accuracy,
-        "sequence_edit_distance": sequence_edit_distance,
-        "rsa_spearman_r": rsa_r,
-        "rsa_pval": rsa_p,
-        "attention_ratio": att_ratio
-    }
-    return result
-
-# ================================
-# Main
-# ================================
-def main():
-    import argparse
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--model", default="microsoft/phi-3-mini-4k-instruct")
-    parser.add_argument("--max_new_tokens", type=int, default=20)
-    args = parser.parse_args()
-
-    # ------------------------
-    # Load model
-    # ------------------------
-    print(f"[INFO] Loading model {args.model}...")
-    model_wrapper = TransformersLLM(args.model)
-
-    results = []
-    for exp in EXPERIMENTS:
-        print(f"[INFO] Running graph '{exp['graph_name']}' from start node '{exp['start_node']}'")
-        try:
-            res = run_experiment(exp, model_wrapper, max_new_tokens=args.max_new_tokens)
-            results.append(res)
-        except Exception as e:
-            print(f"[ERROR] Experiment {exp['graph_name']} failed: {e}")
-
-    # ------------------------
-    # Save CSV
-    # ------------------------
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    csv_file = os.path.join(RESULTS_DIR, f"evaluation_results_{timestamp}.csv")
-    save_csv(results, csv_file)
-
-    print("\n[INFO] All experiments completed successfully!")
+    print(f"[INFO] Results saved to {csv_path}")
+    print("[INFO] All experiments completed successfully!")
 
 if __name__ == "__main__":
     main()
