@@ -4,7 +4,7 @@ from pathlib import Path
 from difflib import SequenceMatcher
 
 import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer, AutoConfig
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
 import networkx as nx
 from graphs import create_line_graph, create_tree_graph, create_clustered_graph
@@ -54,7 +54,13 @@ class HFLLMWrapper:
     def generate_with_activations(self, prompt, max_new_tokens=20):
         inputs = self.tokenizer(prompt, return_tensors="pt").to(self.model.device)
         with torch.no_grad():
-            out = self.model.generate(**inputs, max_new_tokens=max_new_tokens, output_attentions=True, output_hidden_states=True, return_dict_in_generate=True)
+            out = self.model.generate(
+                **inputs,
+                max_new_tokens=max_new_tokens,
+                output_attentions=True,
+                output_hidden_states=True,
+                return_dict_in_generate=True
+            )
         hidden_states = out.decoder_hidden_states if hasattr(out, "decoder_hidden_states") else out.hidden_states
         attentions = out.decoder_attentions if hasattr(out, "decoder_attentions") else out.attentions
         return {"hidden_states": hidden_states, "attentions": attentions}
@@ -81,12 +87,12 @@ def run_experiment(exp, model_wrapper, max_new_tokens=20, start_node="Room 1"):
 
     try:
         # Ground-truth BFS
-        gt_path = bfs_optimal_path_to_max_reward(G, start_node)
+        gt_path = bfs_optimal_path_to_max_reward(G, start_node=start_node)
         results["gt_path"] = gt_path
         print(f"[INFO] Ground-truth BFS path: {gt_path}")
 
         # Hybrid LLM + symbolic
-        hybrid_out = run_hybrid(model_wrapper, G, max_new_tokens=max_new_tokens)
+        hybrid_out = run_hybrid(model_wrapper, G, max_new_tokens=max_new_tokens, start_node=start_node)
         llm_path = hybrid_out.get("best", gt_path)
         results["llm_path"] = llm_path
 
@@ -100,6 +106,7 @@ def run_experiment(exp, model_wrapper, max_new_tokens=20, start_node="Room 1"):
         data = model_wrapper.generate_with_activations("Describe path in graph", max_new_tokens=max_new_tokens)
         hidden_states = data["hidden_states"][-1] if data["hidden_states"] else None
         positions_map = {n:[i] for i,n in enumerate(G.nodes())}
+
         if hidden_states is not None and hidden_states.ndim == 2:
             llm_embs = compute_room_embeddings_from_hidden_states(hidden_states.cpu().numpy(), positions_map)
             theoretical_rsm = build_theoretical_rsm(G, list(G.nodes()))
