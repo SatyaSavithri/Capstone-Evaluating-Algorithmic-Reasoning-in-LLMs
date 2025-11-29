@@ -14,6 +14,11 @@ from rsa_analysis import build_theoretical_rsm, compute_room_embeddings_from_hid
 from attention_analysis import attention_to_room_ratio
 
 # ================================
+# Import TransformersLLM from correct file
+# ================================
+from run_capstone_transformers import TransformersLLM
+
+# ================================
 # Config
 # ================================
 RESULTS_DIR = "./results"
@@ -39,6 +44,19 @@ def save_csv(results, filename):
         for row in results:
             writer.writerow(row)
     print(f"[INFO] Results saved to {filename}")
+
+# ------------------------
+# Simple Levenshtein edit distance
+# ------------------------
+def edit_distance(seq1, seq2):
+    n, m = len(seq1), len(seq2)
+    dp = [[0]*(m+1) for _ in range(n+1)]
+    for i in range(n+1): dp[i][0] = i
+    for j in range(m+1): dp[0][j] = j
+    for i in range(1,n+1):
+        for j in range(1,m+1):
+            dp[i][j] = dp[i-1][j-1] if seq1[i-1]==seq2[j-1] else 1+min(dp[i-1][j-1], dp[i][j-1], dp[i-1][j])
+    return dp[n][m]
 
 # ================================
 # Run Experiment
@@ -105,19 +123,6 @@ def run_experiment(exp, model_wrapper, max_new_tokens=20):
     }
     return result
 
-# ------------------------
-# Simple Levenshtein edit distance
-# ------------------------
-def edit_distance(seq1, seq2):
-    n, m = len(seq1), len(seq2)
-    dp = [[0]*(m+1) for _ in range(n+1)]
-    for i in range(n+1): dp[i][0] = i
-    for j in range(m+1): dp[0][j] = j
-    for i in range(1,n+1):
-        for j in range(1,m+1):
-            dp[i][j] = dp[i-1][j-1] if seq1[i-1]==seq2[j-1] else 1+min(dp[i-1][j-1], dp[i][j-1], dp[i-1][j])
-    return dp[n][m]
-
 # ================================
 # Main
 # ================================
@@ -131,7 +136,6 @@ def main():
     # ------------------------
     # Load model
     # ------------------------
-    from hybrid_runner import TransformersLLM
     print(f"[INFO] Loading model {args.model}...")
     model_wrapper = TransformersLLM(args.model)
 
