@@ -17,9 +17,57 @@ from attention_analysis import attention_to_room_ratio
 from rsa_analysis import build_theoretical_rsm, compute_room_embeddings_from_hidden_states, rsm_from_embeddings, rsa_correlation
 from utils import parse_final_json_path
 from prompts import base_description_text, scratchpad_prompt
+from hybrid_runner import run_hybrid  # Only import the function, safe
 
-# Import only the run_hybrid function from hybrid_runner (safe at top-level)
-from hybrid_runner import run_hybrid
+# -----------------------------
+# Local TransformersLLM (do not modify hybrid_runner.py)
+# -----------------------------
+from transformers import AutoTokenizer, AutoModelForCausalLM
+
+class TransformersLLM:
+    def __init__(self, model_id: str, device: str = "cpu"):
+        print(f"Loading model {model_id}...")
+        self.tokenizer = AutoTokenizer.from_pretrained(model_id)
+        self.model = AutoModelForCausalLM.from_pretrained(
+            model_id,
+            torch_dtype=torch.float32,
+            device_map="cpu",
+            output_hidden_states=True,
+            output_attentions=True
+        )
+        try:
+            self.model.set_attn_implementation("eager")
+        except Exception:
+            pass
+        self.device = device
+        print(f"Model {model_id} loaded.\n")
+
+    def generate(self, prompt: str, max_new_tokens=200, temperature=0.1):
+        inputs = self.tokenizer(prompt, return_tensors="pt").to(self.device)
+        output = self.model.generate(
+            **inputs,
+            max_new_tokens=max_new_tokens,
+            do_sample=False,
+            temperature=temperature,
+            pad_token_id=self.tokenizer.eos_token_id
+        )
+        return self.tokenizer.decode(output[0], skip_special_tokens=True)
+
+    def generate_with_activations(self, prompt: str, max_new_tokens=128):
+        inputs = self.tokenizer(prompt, return_tensors="pt").to(self.device)
+        outputs = self.model(
+            input_ids=inputs["input_ids"],
+            attention_mask=inputs["attention_mask"],
+            output_attentions=True,
+            output_hidden_states=True,
+            use_cache=False
+        )
+        return {
+            "prompt": prompt,
+            "hidden_states": outputs.hidden_states,
+            "attentions": outputs.attentions,
+            "model_output": outputs
+        }
 
 # -----------------------------
 # Configuration
@@ -179,9 +227,6 @@ def run_experiment(exp, model_wrapper):
 # Main
 # -----------------------------
 def main():
-    # Import TransformersLLM inside main to avoid ImportError
-    from hybrid_runner import TransformersLLM
-
     # Load model
     model_id = "microsoft/phi-3-mini-4k-instruct"  # Change if desired
     model_wrapper = TransformersLLM(model_id)
