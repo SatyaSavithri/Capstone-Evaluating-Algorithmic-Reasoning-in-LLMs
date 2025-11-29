@@ -19,11 +19,11 @@ from utils import parse_final_json_path
 from prompts import base_description_text, scratchpad_prompt
 from hybrid_runner import run_hybrid  # Only import the function, safe
 
-# -----------------------------
-# Local TransformersLLM (do not modify hybrid_runner.py)
-# -----------------------------
 from transformers import AutoTokenizer, AutoModelForCausalLM
 
+# -----------------------------
+# Local TransformersLLM
+# -----------------------------
 class TransformersLLM:
     def __init__(self, model_id: str, device: str = "cpu"):
         print(f"Loading model {model_id}...")
@@ -118,9 +118,9 @@ def sequence_edit_distance(path1, path2):
                 dp[i,j] = 1 + min(dp[i-1,j-1], dp[i-1,j], dp[i,j-1])
     return dp[n,m]
 
-def generate_attention_heatmap(attention_matrix, nodes, output_file):
+def generate_attention_heatmap(attn_matrix, nodes, output_file):
     plt.figure(figsize=(8,6))
-    sns.heatmap(attention_matrix, xticklabels=nodes, yticklabels=nodes,
+    sns.heatmap(attn_matrix, xticklabels=nodes, yticklabels=nodes,
                 annot=False, cmap="viridis")
     plt.title("Attention Heatmap")
     plt.tight_layout()
@@ -136,57 +136,63 @@ def generate_rsm_heatmap(rsm, nodes, output_file, title="RSM"):
     plt.close()
 
 # -----------------------------
-# Experiment Runner
+# Run a single experiment
 # -----------------------------
-def run_experiment(exp, model_wrapper):
-    # Build graph
+def run_experiment(exp, model_wrapper, max_new_tokens=20):
     G = exp["builder"]()
     nodes = list(G.nodes)
     rewards = nx.get_node_attributes(G, "reward")
     optimal_reward = max(rewards.values())
     start_node = nodes[0]
 
-    # Symbolic ground-truth path
+    # Ground-truth path
     gt_path = bfs_optimal_path_to_max_reward(G, start_node)
     print(f"\n[INFO] Ground-truth BFS path: {gt_path}")
 
-    # Generate LLM path via Hybrid
-    hybrid_out = run_hybrid(model_wrapper, G)
-    llm_path = parse_final_json_path(hybrid_out["best"] or " -> ".join(nodes))
+    # Hybrid LLM path
+    hybrid_out = run_hybrid(model_wrapper, G, max_new_tokens=max_new_tokens)
+    llm_path = parse_final_json_path(hybrid_out.get("best",""))
     llm_path = normalize_path(llm_path, start_node=start_node)
     print(f"[INFO] LLM generated path: {llm_path}")
 
-    # ---------------------------
     # Behavioral metrics
-    # ---------------------------
     reward_regret = compute_reward_regret(llm_path, rewards, optimal_reward)
     path_values = [rewards.get(node,0) for node in llm_path]
     value_regret = compute_value_regret(path_values, [optimal_reward]*len(llm_path))
-
     traversal_accuracy = 1.0 if llm_path==gt_path else 0.0
     seq_edit_distance = sequence_edit_distance(llm_path, gt_path)
 
-    # ---------------------------
-    # Internal metrics
-    # ---------------------------
+    # -----------------------------
+    # Generate activations and save
+    # -----------------------------
     activations = model_wrapper.generate_with_activations(
-        scratchpad_prompt(base_description_text(G), "valuePath")
+        scratchpad_prompt(base_description_text(G), "valuePath"),
+        max_new_tokens=max_new_tokens
     )
-    hidden_states = torch.cat([h.detach() for h in activations["hidden_states"]], dim=0).cpu().numpy()
-    positions_map = {n:[i for i in range(hidden_states.shape[0])] for n in nodes}  # Placeholder mapping
-    embs = compute_room_embeddings_from_hidden_states(hidden_states, positions_map)
+
+    # Save activations to disk
+    hs = [h.detach().cpu().numpy() for h in activations["hidden_states"]]
+    attns = [a.detach().cpu().numpy() for a in activations["attentions"]]
+    np.savez_compressed(
+        os.path.join(OUTPUT_DIR, f"{exp['name']}_activations.npz"),
+        hidden_states=hs, attentions=attns
+    )
+
+    # Compute RSA and attention metrics
+    hidden_states_array = np.concatenate(hs, axis=0)
+    positions_map = {n:list(range(hidden_states_array.shape[0])) for n in nodes}  # placeholder mapping
+    embs = compute_room_embeddings_from_hidden_states(hidden_states_array, positions_map)
     emp_rsm = rsm_from_embeddings(embs)
     theo_rsm = build_theoretical_rsm(G, nodes)
     rsa_r, rsa_p = rsa_correlation(emp_rsm, theo_rsm)
 
     attn_ratio = None
-    attentions = activations["attentions"]
-    if len(attentions)>0:
-        attn_ratio = attention_to_room_ratio(attentions[-1][0].cpu().numpy(), positions_map)
+    if len(attns)>0:
+        attn_ratio = attention_to_room_ratio(attns[-1][0], positions_map)
 
-    # ---------------------------
+    # -----------------------------
     # Save per-experiment CSV
-    # ---------------------------
+    # -----------------------------
     csv_file = os.path.join(OUTPUT_DIR, f"{exp['name']}_results.csv")
     with open(csv_file, "w", newline="") as f:
         writer = csv.writer(f)
@@ -200,17 +206,16 @@ def run_experiment(exp, model_wrapper):
         writer.writerow(["rsa_correlation", rsa_r])
         writer.writerow(["attention_ratio_analysis", attn_ratio])
 
-    # ---------------------------
-    # Heatmaps
-    # ---------------------------
-    if len(attentions)>0:
-        generate_attention_heatmap(attentions[-1][0].cpu().numpy(), nodes,
+    # -----------------------------
+    # Generate heatmaps
+    # -----------------------------
+    if len(attns)>0:
+        generate_attention_heatmap(attns[-1][0], nodes,
                                    os.path.join(OUTPUT_DIR, f"{exp['name']}_attention.png"))
-    generate_rsm_heatmap(emp_rsm, nodes, os.path.join(OUTPUT_DIR, f"{exp['name']}_rsm.png"))
+    generate_rsm_heatmap(emp_rsm, nodes,
+                         os.path.join(OUTPUT_DIR, f"{exp['name']}_rsm.png"))
 
-    # ---------------------------
-    # Summary metrics
-    # ---------------------------
+    # Return metrics summary
     return {
         "experiment": exp['name'],
         "reward_regret": reward_regret,
@@ -224,16 +229,15 @@ def run_experiment(exp, model_wrapper):
     }
 
 # -----------------------------
-# Main
+# Main function
 # -----------------------------
 def main():
-    # Load model
-    model_id = "microsoft/phi-3-mini-4k-instruct"  # Change if desired
+    model_id = "microsoft/phi-3-mini-4k-instruct"
     model_wrapper = TransformersLLM(model_id)
 
     summary_metrics = []
     for exp in EXPERIMENTS:
-        metrics = run_experiment(exp, model_wrapper)
+        metrics = run_experiment(exp, model_wrapper, max_new_tokens=20)
         summary_metrics.append(metrics)
 
     # Save summary CSV
