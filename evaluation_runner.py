@@ -1,11 +1,12 @@
 # evaluation_runner.py
+
 import os
 import csv
 import numpy as np
 import networkx as nx
 import matplotlib.pyplot as plt
 import seaborn as sns
-from graphs import create_line_graph, create_tree_graph, create_clustered_graph, NODE_PREFIX
+from graphs import create_line_graph, create_tree_graph, create_clustered_graph
 
 # -----------------------------
 # Configuration
@@ -90,13 +91,20 @@ def run_experiment(exp):
     reward_regret = compute_reward_regret(normalized_path, rewards, optimal_reward)
     value_regret = compute_value_regret(path_values, [optimal_reward]*len(normalized_path))
 
+    # --- Print metrics ---
+    print(f"\n--- Metrics for {exp['name']} ---")
+    print(f"Reward Regret: {reward_regret}")
+    print(f"Value Regret (per node): {value_regret}")
+    print(f"Average Value Regret: {np.mean(value_regret):.2f}")
+    print(f"Max Value Regret: {np.max(value_regret):.2f}")
+    print(f"Path Length: {len(normalized_path)}\n")
+
     # --- Attention Heatmap (placeholder) ---
-    # Replace with real attention weights from your model
-    attention_matrix = np.random.rand(len(nodes), len(nodes))
+    attention_matrix = np.random.rand(len(nodes), len(nodes))  # replace with real attention
     heatmap_file = os.path.join(OUTPUT_DIR, f"{exp['name']}_attention.png")
     generate_attention_heatmap(attention_matrix, nodes, heatmap_file)
 
-    # --- Save Results to CSV ---
+    # --- Save per-experiment CSV ---
     csv_file = os.path.join(OUTPUT_DIR, f"{exp['name']}_results.csv")
     with open(csv_file, "w", newline="") as f:
         writer = csv.writer(f)
@@ -106,13 +114,33 @@ def run_experiment(exp):
         writer.writerow([])
         writer.writerow(["reward_regret", reward_regret])
 
-    print(f"[✔] {exp['name']} completed. Results saved to {csv_file} and {heatmap_file}")
+    return {
+        "experiment": exp['name'],
+        "reward_regret": reward_regret,
+        "avg_value_regret": np.mean(value_regret),
+        "max_value_regret": np.max(value_regret),
+        "path_length": len(normalized_path)
+    }
+
+# -----------------------------
+# Main Function
+# -----------------------------
 
 def main():
+    summary_metrics = []
     print(f"Running {len(EXPERIMENTS)} experiments...\n")
     for exp in EXPERIMENTS:
-        run_experiment(exp)
-    print("\nAll experiments completed.")
+        metrics = run_experiment(exp)
+        summary_metrics.append(metrics)
+
+    # --- Save summary CSV ---
+    summary_file = os.path.join(OUTPUT_DIR, "summary_metrics.csv")
+    with open(summary_file, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=summary_metrics[0].keys())
+        writer.writeheader()
+        writer.writerows(summary_metrics)
+
+    print(f"\nAll experiments completed. Summary metrics saved to {summary_file}")
 
 if __name__ == "__main__":
     main()
