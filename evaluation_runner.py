@@ -252,6 +252,7 @@ def main(model_id="microsoft/phi-3-mini-4k-instruct", device="cpu", max_new_toke
 
                 # ---- Hybrid method ----
                 notes_h = ""
+                hybrid_out = {}
                 try:
                     hybrid_out = run_hybrid(llm, G_task, task=task, k=3, max_new_tokens=max_new_tokens)
                     candidates = hybrid_out.get("candidates", [])
