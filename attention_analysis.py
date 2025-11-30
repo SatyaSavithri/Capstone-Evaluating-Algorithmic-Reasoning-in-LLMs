@@ -1,6 +1,6 @@
 # attention_analysis.py
 """
-Attention analysis helpers (final).
+Patched attention utilities: robust numpy conversion and plotting.
 """
 
 import numpy as np
@@ -8,19 +8,29 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from pathlib import Path
 
-def attention_to_room_ratio(attn_matrix: np.ndarray, positions_map: dict):
+def _to_numpy(x):
+    try:
+        import torch
+        if isinstance(x, torch.Tensor):
+            return x.detach().cpu().numpy()
+    except Exception:
+        pass
+    return np.asarray(x)
+
+
+def attention_to_room_ratio(attn_matrix, positions_map):
     """
-    attn_matrix: (seq, seq) numpy array
-    positions_map: dict room -> list[int] token positions
-    Returns float ratio of attention to room tokens vs overall
+    attn_matrix: (seq, seq) numpy array or torch tensor
+    positions_map: dict room -> list of token indices
     """
-    all_positions = [p for v in positions_map.values() for p in v]
-    if len(all_positions) == 0:
+    att = _to_numpy(attn_matrix)
+    all_room_positions = [p for v in positions_map.values() for p in v]
+    if len(all_room_positions) == 0:
         return None
-    seq_len = attn_matrix.shape[0]
+    seq_len = att.shape[0]
     idx = min(seq_len - 1, seq_len - 1)
-    mean_to_rooms = float(np.mean(attn_matrix[idx, all_positions]))
-    mean_to_all = float(np.mean(attn_matrix[idx, :]))
+    mean_to_rooms = float(att[idx, all_room_positions].mean())
+    mean_to_all = float(att[idx, :].mean())
     if mean_to_all == 0:
         return None
     return float(mean_to_rooms / (mean_to_all + 1e-12))
@@ -28,13 +38,15 @@ def attention_to_room_ratio(attn_matrix: np.ndarray, positions_map: dict):
 
 def save_attention_heatmap_from_tensor(attn_matrix, tokens, save_path):
     """
-    attn_matrix: (seq, seq) numpy array
-    tokens: list of token strings (length seq)
+    attn_matrix: (seq, seq) tensor/array
+    tokens: list[str]
+    save_path: filename
     """
+    arr = _to_numpy(attn_matrix)
     save_path = Path(save_path)
     save_path.parent.mkdir(parents=True, exist_ok=True)
     plt.figure(figsize=(10, 8))
-    sns.heatmap(attn_matrix, cmap="viridis")
+    sns.heatmap(arr, cmap="viridis")
     plt.title("Attention heatmap (avg heads)")
     plt.xlabel("Key tokens")
     plt.ylabel("Query tokens")
