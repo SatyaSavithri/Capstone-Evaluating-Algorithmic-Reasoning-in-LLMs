@@ -188,8 +188,8 @@ def main(model_id="microsoft/phi-3-mini-4k-instruct", device="cpu", max_new_toke
                 # Attention heatmap + ratio
                 if attentions is not None:
                     try:
-                        last_layer = attentions[-1]           # (batch, heads, seq, seq)
-                        att_mat = last_layer[0].mean(axis=0).numpy()
+                        last_layer = attentions[-1]
+                        att_mat = last_layer[0].mean(axis=0).detach().cpu().numpy()
 
                         positions, tokens = __find_room_token_positions(llm, sprompt, list(G_task.nodes()))
                         attention_ratio = att_analysis.attention_to_room_ratio(att_mat, positions)
@@ -203,7 +203,7 @@ def main(model_id="microsoft/phi-3-mini-4k-instruct", device="cpu", max_new_toke
                 # RSA
                 if hidden_states is not None:
                     try:
-                        hs_last = hidden_states[-1][0].numpy()    # (seq, hidden)
+                        hs_last = hidden_states[-1][0].detach().cpu().numpy()   # (seq, hidden)
                         positions, _ = __find_room_token_positions(llm, sprompt, list(G_task.nodes()))
                         room_embs = rsa_analysis.compute_room_embeddings_from_hidden_states(hs_last, positions)
                         empirical = rsa_analysis.rsm_from_embeddings(room_embs)
