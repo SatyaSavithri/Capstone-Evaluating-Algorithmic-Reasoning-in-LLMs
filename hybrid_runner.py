@@ -1,50 +1,83 @@
-# hybrid_runner_eval.py
-import torch
+# hybrid_runner.py
+"""
+Patched hybrid runner: returns dict with keys 'candidates', 'best', 'validator_text'.
+Does not expect hidden_states from llm.generate().
+"""
+
+import networkx as nx
+from prompts import validator_prompt
+from typing import List, Dict, Any
 import logging
-from transformers import AutoModelForCausalLM, AutoTokenizer
 
-logger = logging.getLogger(__name__)
-
-class TransformersLLM:
-    """Wrapper for transformers LLM for generating outputs and extracting activations."""
-    def __init__(self, model_id: str, device: str = "cpu"):
-        self.model_id = model_id
-        self.device = device
-
-        logger.info(f"Loading model {model_id} on {device}...")
-        self.tokenizer = AutoTokenizer.from_pretrained(model_id)
-        self.model = AutoModelForCausalLM.from_pretrained(model_id, device_map="auto")
-        self.model.to(device)
-        self.model.eval()
-        logger.info(f"Model {model_id} loaded.")
-
-    @torch.no_grad()
-    def generate(self, prompt: str, max_new_tokens: int = 20):
-        """Generate output and capture hidden states."""
-        inputs = self.tokenizer(prompt, return_tensors="pt").to(self.device)
-        outputs = self.model(**inputs, output_hidden_states=True, output_attentions=True)
-        return outputs
+logger = logging.getLogger("hybrid_runner")
 
 
-def run_hybrid(model_wrapper, G, max_new_tokens=20):
-    """
-    Run a hybrid experiment on a graph with LLM.
-    Returns activations and attentions dictionaries for all nodes.
-    """
-    activations = {}
-    attentions = {}
+def pick_k_candidates(G: nx.Graph, start="Room 1", k=3) -> List[List[str]]:
+    candidates = []
+    rewards = nx.get_node_attributes(G, "reward")
+    if not rewards:
+        return candidates
 
-    for node in G.nodes():
-        prompt = f"Navigate to {node}."
+    # optimal by shortest path to max reward
+    max_node = max(rewards, key=lambda n: rewards[n])
+    try:
+        gt = nx.shortest_path(G, source=start, target=max_node)
+        candidates.append(gt)
+    except Exception:
+        pass
+
+    # add neighbor short paths
+    if start in G:
+        for n in G.neighbors(start):
+            p = [start, n]
+            if p not in candidates:
+                candidates.append(p)
+            if len(candidates) >= k:
+                return candidates[:k]
+
+    # add more candidate paths by reward descending
+    sorted_nodes = sorted(rewards.items(), key=lambda x: -x[1])
+    for node, _ in sorted_nodes:
+        if node == max_node or node == start:
+            continue
         try:
-            output = model_wrapper.generate(prompt, max_new_tokens=max_new_tokens)
-            # Take last hidden state of last token
-            hidden_state = output.hidden_states[-1][:, -1, :].detach().cpu()
-            activations[node] = hidden_state.squeeze(0)  # shape: (hidden_dim,)
-            attentions[node] = output.attentions  # list of attention matrices
-        except Exception as e:
-            logger.warning(f"Failed to generate for node {node}: {e}")
-            activations[node] = torch.zeros(model_wrapper.model.config.hidden_size)
-            attentions[node] = []
+            p = nx.shortest_path(G, source=start, target=node)
+            if p not in candidates:
+                candidates.append(p)
+        except Exception:
+            continue
+        if len(candidates) >= k:
+            break
 
-    return activations, attentions
+    # pad if needed (loop or trivial)
+    if len(candidates) < k:
+        candidates.append([start, start])
+
+    return candidates[:k]
+
+
+def run_hybrid(llm, G: nx.Graph, start: str = "Room 1", task: str = "valuePath",
+               k: int = 3, max_new_tokens: int = 128) -> Dict[str, Any]:
+    """
+    llm: instance of TransformersLLM (must implement .generate(prompt, ...))
+    G: networkx graph
+    Returns: dict {"candidates": [...], "best": "P1", "validator_text": "..."}
+    """
+    candidates = pick_k_candidates(G, start=start, k=k)
+    base_text = f"Facility with {G.number_of_nodes()} rooms starting at {start}.\n"
+    validator = validator_prompt(base_text, candidates)
+    try:
+        validator_text = llm.generate(validator, max_new_tokens=max_new_tokens)
+    except Exception as e:
+        logger.warning(f"LLM generate failed in hybrid validator: {e}")
+        validator_text = ""
+
+    # parse BEST line
+    best = None
+    for line in validator_text.splitlines():
+        line = line.strip()
+        if line.upper().startswith("BEST:"):
+            best = line.split(":", 1)[1].strip()
+            break
+
+    return {"candidates": candidates, "best": best, "validator_text": validator_text}
