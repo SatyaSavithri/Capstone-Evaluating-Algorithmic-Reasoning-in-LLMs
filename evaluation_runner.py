@@ -1,18 +1,14 @@
 """
-evaluation_runner_interactive_final.py
+evaluation_runner.py
 
 Interactive evaluation runner for the Capstone project.
-- Asks which model to run
+- Asks which model to run (Phi or Gemma 2-2B)
 - Applies safe Gemma loading (4-bit quantization) by patching the HF loader at runtime
   (no modifications to models_transformers.py required)
 - Loads model with a timeout to avoid hangs
 - Runs the existing experiments (scratchpad + hybrid) and saves metrics, heatmaps, RSMs
 
-Usage: python evaluation_runner_interactive_final.py
-
-Note: This script monkey-patches transformers.AutoModelForCausalLM.from_pretrained
-only when a Gemma model is selected, injecting a BitsAndBytesConfig for 4-bit loading.
-Requires: transformers, bitsandbytes (if using 4-bit), torch, networkx, matplotlib, seaborn
+Usage: python evaluation_runner.py
 """
 
 import os
@@ -33,12 +29,9 @@ from graphs import create_line_graph, create_tree_graph, create_clustered_graph
 from planner import bfs_optimal_path_to_max_reward
 from prompts import base_description_text, scratchpad_prompt
 from hybrid_runner import run_hybrid
-# scratchpad_runner is available but we call through llm.generate directly
 import attention_analysis as att_analysis
 import rsa_analysis as rsa_analysis
 import utils
-
-# We'll import the user's models_transformers.TransformersLLM only AFTER we patch HF loader when needed
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("evaluation_runner")
@@ -46,15 +39,14 @@ logger = logging.getLogger("evaluation_runner")
 RESULTS_ROOT = Path("evaluation_results")
 RESULTS_ROOT.mkdir(parents=True, exist_ok=True)
 
-# -------------------- Timeout support (prevents indefinite hangs) --------------------
+# -------------------- Timeout support --------------------
 class TimeoutException(Exception):
     pass
 
 def _timeout_handler(signum, frame):
     raise TimeoutException("Operation timed out")
 
-# -------------------- Helper utilities (kept small & robust) --------------------
-
+# -------------------- Helper utilities --------------------
 def extract_path_from_text(text):
     p = utils.parse_final_json_path(text)
     if p:
@@ -62,7 +54,6 @@ def extract_path_from_text(text):
     import re
     toks = re.findall(r'(Room\s*\d+)', text)
     return toks
-
 
 def compute_edit_distance(a, b):
     if a is None: a = []
@@ -77,18 +68,15 @@ def compute_edit_distance(a, b):
             dp[i][j] = min(dp[i-1][j]+1, dp[i][j-1]+1, dp[i-1][j-1]+cost)
     return dp[lena][lenb]
 
-
 def path_accuracy(pred, gt):
     if pred is None or gt is None:
         return 0
     return int(list(pred) == list(gt))
 
-
 def safe_save_json(obj, path: Path):
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w") as f:
         json.dump(obj, f, indent=2)
-
 
 def __find_room_token_positions(llm, prompt, rooms):
     toks = llm.tokenizer.tokenize(prompt)
@@ -102,7 +90,6 @@ def __find_room_token_positions(llm, prompt, rooms):
         positions[r] = matches
     return positions, toks
 
-
 def _to_numpy(x):
     try:
         import torch
@@ -114,44 +101,26 @@ def _to_numpy(x):
     import numpy as np
     return np.asarray(x)
 
-# -------------------- Gemma-safe loader (no edits to models_transformers.py) --------------------
-
+# -------------------- Gemma-safe loader --------------------
 def enable_gemma_safe_loading_session(timeout_seconds=600):
-    """
-    Patches transformers.AutoModelForCausalLM.from_pretrained at runtime to inject
-    BitsAndBytesConfig for 4-bit loading when a model_id contains 'gemma'.
-
-    This function also extends HF hub timeouts and sets helpful env vars.
-    Call this BEFORE importing the user's TransformersLLM wrapper.
-    """
     logger.info("Applying Gemma-safe session settings (4-bit injection).")
-
-    # Increase HF download timeouts (helps on slow networks)
     os.environ.setdefault("HF_HUB_DOWNLOAD_TIMEOUT", "600")
     os.environ.setdefault("HF_HUB_HTTP_TIMEOUT", "600")
     os.environ.setdefault("TRANSFORMERS_VERBOSITY", "info")
-
     try:
-        # Delayed imports so script works even if bitsandbytes isn't installed until needed
         import transformers
         from transformers import AutoModelForCausalLM
-        # BitsAndBytesConfig might be available under transformers; try import
         try:
             from transformers import BitsAndBytesConfig
         except Exception:
-            # fallback import path (older transformers may not expose it)
             BitsAndBytesConfig = None
-
         original_from_pretrained = AutoModelForCausalLM.from_pretrained
 
         def patched_from_pretrained(repo_id, *args, **kwargs):
-            # If the caller passes quantization_config explicitly, respect it
             if kwargs.get("quantization_config") is not None:
                 return original_from_pretrained(repo_id, *args, **kwargs)
-
             if "gemma" in str(repo_id).lower():
                 logger.info(f"Detected Gemma model '{repo_id}' — attempting 4-bit load via patched loader.")
-                # If bitsandbytes / BitsAndBytesConfig available, inject config
                 if BitsAndBytesConfig is not None:
                     try:
                         cfg = BitsAndBytesConfig(
@@ -161,7 +130,6 @@ def enable_gemma_safe_loading_session(timeout_seconds=600):
                         )
                         kwargs["quantization_config"] = cfg
                         kwargs["device_map"] = kwargs.get("device_map", "auto")
-                        # Trust remote code if needed for non-standard architectures
                         kwargs["trust_remote_code"] = kwargs.get("trust_remote_code", True)
                     except Exception as e:
                         logger.warning("Failed to build BitsAndBytesConfig: %s", e)
@@ -173,19 +141,10 @@ def enable_gemma_safe_loading_session(timeout_seconds=600):
         logger.info("Patched AutoModelForCausalLM.from_pretrained successfully.")
     except Exception as e:
         logger.warning("Could not patch HF loader for Gemma: %s", e)
-        # Not fatal — we'll still try to load normally and let error messages surface
 
-# -------------------- Model load wrapper with timeout --------------------
-
+# -------------------- Model load wrapper --------------------
 def load_llm_wrapper(model_id, device, load_timeout=240):
-    """
-    Loads the user wrapper TransformersLLM (from models_transformers.py) with
-    a system alarm to avoid indefinite hangs. Returns instance or raises.
-    """
-    # Import the wrapper lazily (after any patching above)
     from models_transformers import TransformersLLM
-
-    # Install signal alarm for timeout (POSIX only)
     signal.signal(signal.SIGALRM, _timeout_handler)
     signal.alarm(load_timeout)
     try:
@@ -200,24 +159,15 @@ def load_llm_wrapper(model_id, device, load_timeout=240):
         logger.error("Failed to load model '%s': %s", model_id, e)
         raise
 
-# -------------------- Main experiments function (same logic as your pipeline) --------------------
-
+# -------------------- Main experiment function --------------------
 def run_all_experiments_for_model(model_id, device="cpu", max_new_tokens=150):
     logger.info("Starting experiments for model: %s", model_id)
-
     ts = time.strftime("%Y%m%d_%H%M%S")
     run_dir = RESULTS_ROOT / model_id.replace("/", "_") / ts
     run_dir.mkdir(parents=True, exist_ok=True)
     logger.info("Results will be saved to: %s", run_dir)
 
-    # Apply gemma safe loader if model mentions gemma
-    if "gemma" in model_id.lower():
-        enable_gemma = True
-        enable_gemma_safe_loading_session()
-    else:
-        enable_gemma = False
-
-    # Load the model wrapper (with timeout)
+    # Load model wrapper
     try:
         llm = load_llm_wrapper(model_id, device, load_timeout=240)
     except Exception as e:
@@ -249,7 +199,7 @@ def run_all_experiments_for_model(model_id, device="cpu", max_new_tokens=150):
                 graph_key = f"{key}_{task}"
                 logger.info("Running: %s", graph_key)
 
-                # prepare task-specific graph copy
+                # Prepare task-specific graph copy
                 if task == "rewardReval":
                     G_task = G.copy()
                     rewards = nx.get_node_attributes(G_task, "reward")
@@ -267,7 +217,6 @@ def run_all_experiments_for_model(model_id, device="cpu", max_new_tokens=150):
                 gt_path = bfs_optimal_path_to_max_reward(G_task, start_node)
                 gt_reward = nx.get_node_attributes(G_task, "reward").get(gt_path[-1], 0) if gt_path else 0
 
-                # prepare prompts
                 desc = base_description_text(G_task, start_node)
                 sprompt = scratchpad_prompt(desc, task)
 
@@ -286,7 +235,6 @@ def run_all_experiments_for_model(model_id, device="cpu", max_new_tokens=150):
                 pred_reward_sp = nx.get_node_attributes(G_task, "reward").get(pred_sp[-1], 0) if pred_sp else 0
                 reward_diff_sp = gt_reward - pred_reward_sp
 
-                # attempt to get activations & attentions
                 attention_ratio = None
                 heatmap_file = None
                 rsm_file = None
@@ -303,7 +251,6 @@ def run_all_experiments_for_model(model_id, device="cpu", max_new_tokens=150):
                     notes += f"activations_error:{e};"
                     logger.warning("generate_with_activations failed: %s", e)
 
-                # process attentions
                 if attentions is not None:
                     try:
                         last_layer = attentions[-1]
@@ -318,7 +265,6 @@ def run_all_experiments_for_model(model_id, device="cpu", max_new_tokens=150):
                         notes += f"attn_proc_error:{e};"
                         logger.warning("Attention processing failed: %s", e)
 
-                # process RSA
                 if hidden_states is not None:
                     try:
                         last_hidden = hidden_states[-1]
@@ -336,7 +282,6 @@ def run_all_experiments_for_model(model_id, device="cpu", max_new_tokens=150):
                         notes += f"rsa_proc_error:{e};"
                         logger.warning("RSA processing failed: %s", e)
 
-                # save raw scratchpad
                 safe_save_json({
                     "prompt": sprompt,
                     "scratchpad_text": sp_out,
@@ -344,7 +289,6 @@ def run_all_experiments_for_model(model_id, device="cpu", max_new_tokens=150):
                     "ground_truth": gt_path
                 }, run_dir / f"{graph_key}_scratch_raw.json")
 
-                # write metrics row (scratchpad)
                 writer.writerow({
                     "run_time": time.strftime("%Y-%m-%d %H:%M:%S"),
                     "graph_key": graph_key,
@@ -421,37 +365,30 @@ def run_all_experiments_for_model(model_id, device="cpu", max_new_tokens=150):
 
 # -------------------- Interactive CLI --------------------
 if __name__ == "__main__":
-    print("\n==================== MODEL SELECTION ====================")
-    print("Choose a model to evaluate:")
-    print("1) microsoft/phi-3-mini-4k-instruct  (open; recommended)")
-    print("2) google/gemma-2-2b-it              (small gemma - lighter)")
-    print("3) google/gemma-2-9b-it              (heavy gemma - 4-bit patched)")
-    print("4) Enter custom HuggingFace model ID")
-    print("========================================================\n")
-
-    choice = input("Enter choice (1/2/3/4): ").strip()
+    print("\n================ MODEL SELECTION ================")
+    print("1) Phi: microsoft/phi-3-mini-4k-instruct")
+    print("2) Gemma 2-2B: google/gemma-2-2b-it")
+    print("==============================================\n")
+    choice = input("Enter choice (1/2): ").strip()
     if choice == "1":
         chosen = "microsoft/phi-3-mini-4k-instruct"
+        try:
+            import torch
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+        except Exception:
+            device = "cpu"
     elif choice == "2":
         chosen = "google/gemma-2-2b-it"
-    elif choice == "3":
-        chosen = "google/gemma-2-9b-it"
-    elif choice == "4":
-        chosen = input("Enter full HuggingFace model ID: ").strip()
-    else:
-        print("Invalid choice; defaulting to microsoft/phi-3-mini-4k-instruct")
-        chosen = "microsoft/phi-3-mini-4k-instruct"
-
-    # If the chosen model is a Gemma variant, apply the session patch BEFORE importing wrapper
-    if "gemma" in chosen.lower():
-        enable_gemma_safe_loading_session()
-
-    # Determine device
-    try:
-        import torch
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-    except Exception:
         device = "cpu"
+        enable_gemma_safe_loading_session()
+    else:
+        print("Invalid choice; defaulting to Phi model.")
+        chosen = "microsoft/phi-3-mini-4k-instruct"
+        try:
+            import torch
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+        except Exception:
+            device = "cpu"
 
     print(f"\nSelected model: {chosen}")
     print(f"Device: {device}")
