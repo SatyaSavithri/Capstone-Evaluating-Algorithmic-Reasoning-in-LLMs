@@ -1,0 +1,13 @@
+{
+  "prompt": "Facility with 7 rooms starting at Room 1.\nConnections: Room 1-Room 2; Room 1-Room 3; Room 2-Room 4; Room 2-Room 5; Room 3-Room 6; Room 3-Room 7.\nRewards: Room 4=$15, Room 7=$50.\n\nTASK: Find the shortest path from Room 1 to the room with the highest reward.\n\n***SCRATCHPAD METHOD***\nFor each step: Step i: Current room: [Room X]; Choices: [Room A, Room B]; Chosen: [Room Y]; Rationale: [brief].\nFINAL_JSON: {\"path\": [\"Room 1\", \"Room 2\", ...]}\nImportant: final JSON line must be valid JSON with key 'path'.",
+  "scratchpad_text": "Facility with 7 rooms starting at Room 1.\nConnections: Room 1-Room 2; Room 1-Room 3; Room 2-Room 4; Room 2-Room 5; Room 3-Room 6; Room 3-Room 7.\nRewards: Room 4=$15, Room 7=$50.\n\nTASK: Find the shortest path from Room 1 to the room with the highest reward.\n\n***SCRATCHPAD METHOD***\nFor each step: Step i: Current room: [Room X]; Choices: [Room A, Room B]; Chosen: [Room Y]; Rationale: [brief].\nFINAL_JSON: {\"path\": [\"Room 1\", \"Room 2\", ...]}\nImportant: final JSON line must be valid JSON with key 'path'.\n\n```python\ndef shortest_path(rooms, rewards):\n    # Initialize the starting room and the rewards\n    current_room = 1\n    rewards_list = rewards\n    \n    # Create a list to store the path\n    path = []\n    \n    # Iterate through the rooms\n    while current_room != 7:\n        # Get the possible choices\n        choices = [rooms[i] for i in range(len(rooms)) if i != current_room]\n        \n        # Find the room with the highest reward\n        max_reward = max(rewards_list)\n        max_reward_room = rewards_list.index(max_reward)\n        ",
+  "predicted_path": [
+    "FINAL_JSON: {\"path\": [\"Room 1\"",
+    "\"Room 2\""
+  ],
+  "ground_truth": [
+    "Room 1",
+    "Room 3",
+    "Room 7"
+  ]
+}

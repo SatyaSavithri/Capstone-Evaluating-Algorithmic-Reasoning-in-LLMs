@@ -1,0 +1,22 @@
+{
+  "candidates": [
+    [
+      "Room 1",
+      "Room 5",
+      "Room 6",
+      "Room 10",
+      "Room 11",
+      "Room 15"
+    ],
+    [
+      "Room 1",
+      "Room 2"
+    ],
+    [
+      "Room 1",
+      "Room 3"
+    ]
+  ],
+  "best": "P1",
+  "validator_text": "Facility with 15 rooms starting at Room 1.\n\n\nProvided candidate paths:\nP1: Room 1 -> Room 5 -> Room 6 -> Room 10 -> Room 11 -> Room 15\nP2: Room 1 -> Room 2\nP3: Room 1 -> Room 3\n\nTASK: Evaluate which candidate reaches the highest reward. Answer exactly 'BEST: P#' on a single line. If tie, list comma-separated (e.g., BEST: P1,P2).\n\n\n**Input:**\n```\nRooms: 15\nCandidate Paths:\nP1: Room 1 -> Room 5 -> Room 6 -> Room 10 -> Room 11 -> Room 15\nP2: Room 1 -> Room 2\nP3: Room 1 -> Room 3\n```\n\n**Output:**\n```\nBEST: P1\n```\n\n\n**Explanation:**\n\nThe goal is to find the candidate path that leads to the highest reward.  We need to evaluate the paths based on some criteria. \n\n**Note:**  The provided input does not contain any information about the reward associated with each room.  Therefore, we need to assume that the reward is simply the"
+}
