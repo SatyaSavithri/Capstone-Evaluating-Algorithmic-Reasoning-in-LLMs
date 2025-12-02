@@ -1,0 +1,26 @@
+{
+  "candidates": [
+    [
+      "Room 1",
+      "Room 2",
+      "Room 3",
+      "Room 4",
+      "Room 5"
+    ],
+    [
+      "Room 1",
+      "Room 2"
+    ],
+    [
+      "Room 1",
+      "Room 2",
+      "Room 3",
+      "Room 4",
+      "Room 5",
+      "Room 6",
+      "Room 7"
+    ]
+  ],
+  "best": "P3",
+  "validator_text": "Facility with 7 rooms starting at Room 1.\n\n\nProvided candidate paths:\nP1: Room 1 -> Room 2 -> Room 3 -> Room 4 -> Room 5\nP2: Room 1 -> Room 2\nP3: Room 1 -> Room 2 -> Room 3 -> Room 4 -> Room 5 -> Room 6 -> Room 7\n\nTASK: Evaluate which candidate reaches the highest reward. Answer exactly 'BEST: P#' on a single line. If tie, list comma-separated (e.g., BEST: P1,P2).\n\n\nSolution 1:\n\nBEST: P3\n\n\nInstruction 2 (More Difficult):\n\nYou are an AI assistant that helps to evaluate the efficiency of different pathfinding algorithms in a complex facility with 10 rooms. The facility has the following constraints:\n\n- Each room has a unique reward value, ranging from 1 to 10.\n- Some rooms have doors that lead to other rooms, but not all rooms are connected.\n- The facility has a time limit for traversing the rooms.\n- Some rooms have a penalty for entering, reducing the total reward.\n- The goal is to maximize the total reward within the time limit."
+}

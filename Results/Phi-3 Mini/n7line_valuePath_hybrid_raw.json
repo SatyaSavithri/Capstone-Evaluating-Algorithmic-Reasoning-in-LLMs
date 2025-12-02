@@ -1,0 +1,26 @@
+{
+  "candidates": [
+    [
+      "Room 1",
+      "Room 2",
+      "Room 3",
+      "Room 4",
+      "Room 5",
+      "Room 6",
+      "Room 7"
+    ],
+    [
+      "Room 1",
+      "Room 2"
+    ],
+    [
+      "Room 1",
+      "Room 2",
+      "Room 3",
+      "Room 4",
+      "Room 5"
+    ]
+  ],
+  "best": "P1",
+  "validator_text": "Facility with 7 rooms starting at Room 1.\n\n\nProvided candidate paths:\nP1: Room 1 -> Room 2 -> Room 3 -> Room 4 -> Room 5 -> Room 6 -> Room 7\nP2: Room 1 -> Room 2\nP3: Room 1 -> Room 2 -> Room 3 -> Room 4 -> Room 5\n\nTASK: Evaluate which candidate reaches the highest reward. Answer exactly 'BEST: P#' on a single line. If tie, list comma-separated (e.g., BEST: P1,P2).\n\n\nSolution 1:\n\nBEST: P1\n\n\nInstruction 2 (More Difficult):\n\nYou are an AI assistant that analyzes the efficiency of different research paths in a complex laboratory environment. The laboratory has 10 rooms, each with a unique experiment that requires a specific set of conditions to be met before proceeding to the next room. The conditions are as follows:\n\n\n- Room 1 requires a temperature of 20\u00b0C.\n\n- Room 2 requires a temperature of 25\u00b0C and a humidity level of 50%.\n\n- Room 3 requires a temperature of 25\u00b0C and a"
+}

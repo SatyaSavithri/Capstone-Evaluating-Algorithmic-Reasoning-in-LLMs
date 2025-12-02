@@ -1,0 +1,14 @@
+{
+  "prompt": "Facility with 15 rooms starting at Room 1.\nConnections: Room 1-Room 2; Room 1-Room 3; Room 1-Room 4; Room 1-Room 5; Room 2-Room 3; Room 2-Room 4; Room 2-Room 5; Room 3-Room 4; Room 3-Room 5; Room 4-Room 5; Room 5-Room 6; Room 6-Room 7; Room 6-Room 8; Room 6-Room 9; Room 6-Room 10; Room 7-Room 8; Room 7-Room 9; Room 7-Room 10; Room 8-Room 9; Room 8-Room 10; Room 9-Room 10; Room 10-Room 11; Room 11-Room 12; Room 11-Room 13; Room 11-Room 14; Room 11-Room 15; Room 12-Room 13; Room 12-Room 14; Room 12-Room 15; Room 13-Room 14; Room 13-Room 15; Room 14-Room 15.\nRewards: Room 4=$85, Room 15=$75.\n\nTASK: Re-evaluate after a reward update.\n\n***SCRATCHPAD METHOD***\nFor each step: Step i: Current room: [Room X]; Choices: [Room A, Room B]; Chosen: [Room Y]; Rationale: [brief].\nFINAL_JSON: {\"path\": [\"Room 1\", \"Room 2\", ...]}\nImportant: final JSON line must be valid JSON with key 'path'.",
+  "scratchpad_text": "Facility with 15 rooms starting at Room 1.\nConnections: Room 1-Room 2; Room 1-Room 3; Room 1-Room 4; Room 1-Room 5; Room 2-Room 3; Room 2-Room 4; Room 2-Room 5; Room 3-Room 4; Room 3-Room 5; Room 4-Room 5; Room 5-Room 6; Room 6-Room 7; Room 6-Room 8; Room 6-Room 9; Room 6-Room 10; Room 7-Room 8; Room 7-Room 9; Room 7-Room 10; Room 8-Room 9; Room 8-Room 10; Room 9-Room 10; Room 10-Room 11; Room 11-Room 12; Room 11-Room 13; Room 11-Room 14; Room 11-Room 15; Room 12-Room 13; Room 12-Room 14; Room 12-Room 15; Room 13-Room 14; Room 13-Room 15; Room 14-Room 15.\nRewards: Room 4=$85, Room 15=$75.\n\nTASK: Re-evaluate after a reward update.\n\n***SCRATCHPAD METHOD***\nFor each step: Step i: Current room: [Room X]; Choices: [Room A, Room B]; Chosen: [Room Y]; Rationale: [brief].\nFINAL_JSON: {\"path\": [\"Room 1\", \"Room 2\", ...]}\nImportant: final JSON line must be valid JSON with key 'path'.\n\n***SCRATCHPAD METHOD***\nFor each step: Step i: Current room: [Room X]; Choices: [Room A, Room B]; Chosen: [Room Y]; Rationale: [brief].\nFINAL_JSON: {\"path\": [\"Room 1\", \"Room 2\", ...]}\nImportant: final JSON line must be valid JSON with key 'path'.\n\n***SCRATCHPAD METHOD***\nFor each step: Step i: Current room: [Room X]; Choices: [Room A, Room B]; Chosen: [Room Y]; Rationale: [brief].",
+  "predicted_path": [
+    "For each step: Step i: Current room: [Room X]",
+    "Choices: [Room A",
+    "Room B]",
+    "Chosen: [Room Y]"
+  ],
+  "ground_truth": [
+    "Room 1",
+    "Room 4"
+  ]
+}
