@@ -1,0 +1,21 @@
+# Core ML + Transformers
+torch
+transformers
+accelerate
+
+# Graph Processing
+networkx
+
+# Numerical + Statistical Analysis
+numpy
+scipy
+
+# Plotting & Visualization
+matplotlib
+seaborn
+
+# PDF/Document Utilities (optional; used for README PDF generation)
+reportlab
+
+# Jupyter Support (optional)
+ipython
